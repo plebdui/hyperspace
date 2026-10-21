@@ -29,6 +29,10 @@ static const char* const kScene = R"(#version 330 core
 out vec4 frag;
 uniform vec2 uRes;
 uniform float uTime, uBass, uMid, uHigh, uLevel, uBeat, uStage, uEntityAmt, uMood, uHue, uZoom, uSpin;
+uniform float uDim, uDimAmt;  // extra dimensions: which world (0 none, 1 pillars, 2 forest, 3 corridor) and how far faded in
+uniform float uCalm;          // how much to quiet the trip's colour overlays (a dimension, or firework-watching)
+uniform float uSpread;        // how wide a slice of the spectrum (music-reactive): small = a cohesive scheme, 1 = full rainbow
+uniform float uFocus;         // firework-watching: darken the base scene so the fireworks stand alone
 uniform int uEntity, uPatA, uPatB;
 uniform float uPatT, uPatAmt;
 uniform float uGridTurn, uGridFocus;
@@ -66,6 +70,7 @@ vec3 seedRamp(float t)
 // colours: candy rainbow (leaning pink and green) when the music is bright, violet / teal / crimson when it's dark
 vec3 pal(float t)
 {
+    t = uHue + (t - uHue) * uSpread;  // keep colours in a drifting band, not the whole spectrum at once
     vec3 bright = 0.5 + 0.5 * cos(6.2831 * (t + vec3(0.0, 0.33, 0.67)));
     bright = mix(bright, mix(vec3(1.0, 0.2, 0.65), vec3(0.2, 1.0, 0.5), 0.5 + 0.5 * cos(6.2831 * t)), 0.4);  // pulled toward pink and green
     vec3 dark = vec3(0.32, 0.18, 0.42) + vec3(0.38, 0.32, 0.45) * cos(6.2831 * (t + vec3(0.62, 0.42, 0.18)));
@@ -592,6 +597,116 @@ vec4 entity(vec2 p)
     return mantis(p);
 }
 
+// ---- EXTRA DIMENSIONS: three procedurally-generated 3D worlds you can fly through
+//   1 pillars  - an endless hall of pillars of changing height, breathing with the bass
+//   2 forest   - trunks and noisy canopies, swaying with the mids, light falling through
+//   3 corridor - a cave tube that twists and bulges, its walls roughened by noise, rings on the beat
+float wH3(vec3 p) { p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
+float wN3(vec3 p)
+{
+    vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(wH3(i), wH3(i + vec3(1, 0, 0)), f.x), mix(wH3(i + vec3(0, 1, 0)), wH3(i + vec3(1, 1, 0)), f.x), f.y),
+               mix(mix(wH3(i + vec3(0, 0, 1)), wH3(i + vec3(1, 0, 1)), f.x), mix(wH3(i + vec3(0, 1, 1)), wH3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+float wSdBox(vec3 p, vec3 b) { vec3 q = abs(p) - b; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0); }
+float wSdCap(vec3 p, vec3 a, vec3 b, float r) { vec3 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h) - r; }
+
+// one signed-distance map for all three worlds; mid comes back tagging what was hit
+float wMap(vec3 q, int dim, out float mid)
+{
+    mid = 0.0;
+    if (dim == 1) {                                                   // PILLARS
+        float ground = q.y + 2.0;
+        vec2 cell = floor(q.xz / 4.0);
+        vec3 r = vec3(mod(q.x + 2.0, 4.0) - 2.0, q.y, mod(q.z + 2.0, 4.0) - 2.0);
+        float ht = 3.0 + 7.0 * wH3(vec3(cell, 0.5));
+        ht += 1.6 * uBass * sin(uTime * 1.5 + wH3(vec3(cell, 9.0)) * 30.0);   // heights breathing with the bass
+        float rad = 0.45 + 0.35 * wH3(vec3(cell, 5.5));
+        float pil = wSdBox(vec3(r.x, r.y - (ht - 2.0) * 0.5, r.z), vec3(rad, ht * 0.5, rad)) - 0.06;
+        if (pil < ground) mid = 1.0;
+        return min(ground, pil);
+    }
+    if (dim == 2) {                                                   // FOREST
+        float ground = q.y + 3.0 + 0.3 * fbm(q.xz * 0.3);
+        vec2 cell = floor(q.xz / 5.0);
+        vec3 r = vec3(mod(q.x + 2.5, 5.0) - 2.5, q.y, mod(q.z + 2.5, 5.0) - 2.5);
+        float sway = 0.25 * uMid * sin(uTime * 0.9 + wH3(vec3(cell, 2.0)) * 10.0);
+        float th = 6.0 + 4.0 * wH3(vec3(cell, 2.0));
+        vec3 top = vec3(sway * 4.0 + 0.4 * (wH3(vec3(cell, 8.0)) - 0.5), th - 3.0, 0.4 * (wH3(vec3(cell, 4.0)) - 0.5));
+        float trunk = wSdCap(r, vec3(0.0, -3.0, 0.0), top, 0.22 + 0.06 * wH3(vec3(cell, 1.0)));
+        float cr = 1.6 + 1.3 * wH3(vec3(cell, 6.0));
+        float canopy = length(r - top) - cr - 0.25 * wN3((r - top) * 0.8 + uTime * 0.15);  // gently lumpy, not noisy
+        float tree = smin(trunk, canopy, 0.5);
+        if (tree < ground) mid = (canopy < trunk) ? 2.0 : 1.0;        // 2 canopy, 1 bark
+        return min(ground, tree);
+    }
+    // CORRIDOR (dim == 3): we march the air inside the tube, the wall is the surface
+    vec2 ctr = vec2(1.6 * sin(q.z * 0.18) + 2.0 * sin(q.z * 0.06), 1.3 * cos(q.z * 0.15));
+    vec2 d2 = q.xy - ctr;
+    float ang = atan(d2.y, d2.x);
+    float reff = 2.7 + 0.45 * sin(q.z * 0.5)
+               - 0.3 * fbm(vec2(ang * 2.0, q.z * 0.2));               // smooth bulges, ln draws them clean
+    mid = 1.0;
+    return reff - length(d2);                                         // positive inside the tube
+}
+
+vec3 wNormal(vec3 q, int dim)
+{
+    float m; vec2 e = vec2(0.0015, -0.0015);
+    return normalize(e.xyy * wMap(q + e.xyy, dim, m) + e.yyx * wMap(q + e.yyx, dim, m)
+                   + e.yxy * wMap(q + e.yxy, dim, m) + e.xxx * wMap(q + e.xxx, dim, m));
+}
+
+vec3 world(vec2 p, int dim)
+{
+    float spd = 2.2 + 2.5 * uLevel;
+    float z0 = uTime * spd;
+    vec3 ro, rd = normalize(vec3(p, 1.25));
+    rd.xy = rot(uSpin * 0.3 + 0.12 * sin(uTime * 0.2)) * rd.xy;       // banking as you fly
+    if (dim == 1)      ro = vec3(1.2 * sin(uTime * 0.3), 1.0, z0);
+    else if (dim == 2) ro = vec3(1.5 * sin(uTime * 0.25), 1.6, z0);
+    else { vec2 c = vec2(1.6 * sin(z0 * 0.18) + 2.0 * sin(z0 * 0.06), 1.3 * cos(z0 * 0.15)); ro = vec3(c, z0); }
+
+    float t = 0.0, mid = 0.0; bool hit = false;
+    for (int i = 0; i < 96; i++) {
+        float d = wMap(ro + rd * t, dim, mid);
+        if (d < 0.003 + 0.004 * t) { hit = true; break; }
+        t += d * 0.85;                                               // under-relaxed: the maps are approximate
+        if (t > 60.0) break;
+    }
+    // the ln look: a 3D scene drawn in ink on paper, hidden lines removed by the march itself.
+    // paper tints faintly with the mood; the ink carries this moment's hue.
+    vec3 paper = mix(vec3(0.95, 0.94, 0.9), pal(uHue + 0.5) * 0.25 + 0.68, 0.1 * uMood);  // near-white, only a whisper of hue
+    vec3 ink   = mix(vec3(0.02, 0.02, 0.05), pal(uHue) * 0.35, 0.4);                       // dark ink, lightly tinted, for strong contrast
+    if (!hit) return paper;
+
+    vec3 q = ro + rd * t;
+    vec3 n = wNormal(q, dim);
+    float near = 1.0 - smoothstep(0.0, 14.0, t);                      // how close: near lines bold, far lines faint (aerial perspective = depth)
+    float fade = 1.0 - smoothstep(16.0, 52.0, t);                     // far lines run dry, like a plotter pen
+
+    // the drawn lines: occluding contours (view grazes the surface) + depth breaks (one shape in front of another) + creases (corners, ridges)
+    float silh   = pow(1.0 - max(dot(n, -rd), 0.0), 2.0);
+    float depthE = smoothstep(0.03, 0.1, fwidth(t) / max(t, 1.0));    // where depth jumps, a shape hides the one behind
+    float creaseE = smoothstep(1.4, 2.8, length(fwidth(n)) * 30.0);   // only real corners and ridges, not every wrinkle
+    float line = clamp(max(smoothstep(0.45, 0.8, silh), max(depthE, creaseE * 0.8)), 0.0, 1.0);
+
+    // a receding floor/ground grid: the strongest cue that you're standing inside a 3D space, lines converging to the horizon
+    if (dim != 3 && mid < 0.5) {
+        vec2 gr = abs(fract(q.xz) - 0.5) / max(fwidth(q.xz), vec2(1e-4));
+        line = max(line, 1.0 - clamp(min(gr.x, gr.y), 0.0, 1.0));
+    }
+
+    // hatching that follows the form, laid into the shaded side (the music combs it finer and tilts it)
+    float lit = 0.5 + 0.5 * dot(n, normalize(vec3(0.4, 0.8, -0.3)));
+    float hatch = smoothstep(0.78, 0.97, sin((q.x + q.y * 1.3 + q.z) * (5.0 + 4.0 * uMid) + uTime * 0.5));
+    hatch *= (1.0 - smoothstep(0.35, 0.7, lit)) * 0.4;
+
+    float press = (1.0 + 0.7 * uBeat + 0.45 * uHigh) * (0.6 + 0.9 * near);  // near lines pressed harder/bolder, far lines light: depth
+    float amt = clamp((line * press + hatch) * fade, 0.0, 1.0);
+    return mix(paper, ink, amt);
+}
+
 void main()
 {
     vec2 uv = gl_FragCoord.xy / uRes;
@@ -604,6 +719,8 @@ void main()
     if (w1 > 0.0) col += w1 * chrysanthemum(p);
     if (w2 > 0.0) col += w2 * tunnel(p);
     if (w3 > 0.0) col += w3 * dome(p);
+    // an extra dimension flown into, crossfading over whatever stage we're on
+    if (uDimAmt > 0.001) col = mix(col, world(p, int(uDim + 0.5)), uDimAmt);
     // the repeating pattern laid over it all (screen blend), fading from one to the next
     if (uPatAmt > 0.0) {
         vec3 pat = pattern(p, uPatA);
@@ -625,13 +742,14 @@ void main()
         pic = max(mix(vec3(dot(pic, vec3(0.299, 0.587, 0.114))), pic, 1.6), 0.0) * 0.72;  // a little deeper and richer, so pale things don't glow white
         col = mix(col, pic * (1.0 + 0.3 * uBass), uIntro * uMediaAmt * 0.92 * MA(iuv));
     }
+    col *= 1.0 - 0.88 * uFocus;  // firework-watching: fade the trip to near-dark so the burst lines stand alone
     // the last frame, pulled inward and turned, its colours drifting: everything melts and trails
     vec2 fq = (uv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
     fq = rot(0.004 + 0.012 * uMid) * fq * (0.985 - 0.012 * uBass);
     vec3 prev = texture(uPrev, fq / vec2(uRes.x / uRes.y, 1.0) + 0.5).rgb;
     if (any(isnan(prev)) || any(isinf(prev))) prev = vec3(0.0);  // one bad pixel must never spread through the trails
     prev = max(hueShift(prev, 0.01 + 0.02 * uHigh), 0.0);
-    float fb = (0.5 + 0.15 * uStage / 3.0) * (1.0 - 0.8 * uIntro);
+    float fb = (0.5 + 0.15 * uStage / 3.0) * (1.0 - 0.8 * uIntro) * (1.0 - 0.92 * uCalm);  // quieted scenes barely trail, so lines stay crisp
     col = mix(col, max(col, prev * 0.94), fb);
     if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
     frag = vec4(min(col, vec3(64.0)), 1.0);
@@ -669,7 +787,7 @@ out vec4 frag;
 uniform sampler2D uScene;
 uniform vec2 uRes;
 uniform int uMirror;
-uniform float uTrace, uContrast, uHue, uMood, uTurn;
+uniform float uTrace, uContrast, uHue, uMood, uTurn, uSpread;
 uniform vec3 uSeedPal[3];  // a dropped picture's three main colours...
 uniform float uSeedMix;     // ...and how much they colour everything
 #define PI 3.14159265
@@ -682,6 +800,7 @@ vec3 seedRamp(float t)
 }
 vec3 pal(float t)
 {
+    t = uHue + (t - uHue) * uSpread;  // keep colours in a drifting band, not the whole spectrum at once
     vec3 bright = 0.5 + 0.5 * cos(6.2831 * (t + vec3(0.0, 0.33, 0.67)));
     bright = mix(bright, mix(vec3(1.0, 0.2, 0.65), vec3(0.2, 1.0, 0.5), 0.5 + 0.5 * cos(6.2831 * t)), 0.4);  // pulled toward pink and green
     vec3 dark = vec3(0.32, 0.18, 0.42) + vec3(0.38, 0.32, 0.45) * cos(6.2831 * (t + vec3(0.62, 0.42, 0.18)));
@@ -737,7 +856,7 @@ uniform vec2 uRes;
 void main()
 {
     vec3 c = texture(uSrc, gl_FragCoord.xy / uRes).rgb;
-    frag = vec4(max(c - 0.65, 0.0) * 1.5, 1.0);
+    frag = vec4(max(c - 0.82, 0.0) * 1.0, 1.0);  // only the brightest bits bloom, so line detail isn't drowned in glow
 }
 )";
 // BLUR: a soft smear along one direction (run across, then down)
@@ -763,17 +882,17 @@ static const char* const kPresent = R"(#version 330 core
 out vec4 frag;
 uniform sampler2D uScene, uBloom;
 uniform vec2 uRes;
-uniform float uBass, uTime, uBloomAmt;
+uniform float uBass, uTime, uBloomAmt, uCalm, uSpread;
 float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 void main()
 {
     vec2 uv = gl_FragCoord.xy / uRes, d = uv - 0.5;
-    float k = 0.003 + 0.008 * uBass;  // colours split apart a little on the bass
+    float k =(0.003 + 0.008 * uBass) * (1.0 - 0.9 * uCalm) * (0.25 + 0.75 * uSpread);  // colour split; eased right down when the palette is narrow, so edges don't fringe rainbow
     vec3 c = vec3(texture(uScene, 0.5 + d * (1.0 + k)).r, texture(uScene, uv).g, texture(uScene, 0.5 + d * (1.0 - k)).b);
     c += texture(uBloom, uv).rgb * uBloomAmt;
     c *= 1.0 - 0.7 * dot(d, d);
     c = c / (1.0 + 0.12 * c);
-    c += (hash(gl_FragCoord.xy + fract(uTime) * 100.0) - 0.5) * 0.025;
+    c += (hash(gl_FragCoord.xy + fract(uTime) * 100.0) - 0.5) * 0.025 * (1.0 - 0.85 * uCalm);
     if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
     frag = vec4(c, 1.0);
 }

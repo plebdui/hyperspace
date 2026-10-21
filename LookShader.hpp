@@ -26,12 +26,17 @@ out vec4 frag;
 uniform sampler2D uScene, uFrozen;
 uniform sampler2DArray uHist;
 uniform int uHead, uFx;
-uniform int uCams[4];       // the camera moves stacked on top of each other (0 = none)
-uniform float uCamTs[4];    // how long each has been going
+uniform int uCams[8];       // the camera moves stacked on top of each other (0 = none): 4 going, 4 fading out
+uniform float uCamTs[8];    // how long each has been going
+uniform float uCamWs[8];
+uniform int uCamTest;
+uniform float uCamBeat, uCamBass;  // (uCamBass: the bass, smoothed, for the camera)     // the kick, with a quick smooth attack (for the camera: a punch, not a jump)       // (testing: show only the camera, looking at a checkerboard)    // how much of each (they fade in and out, so one move morphs into the next)
 uniform vec2 uRes;
 uniform float uTime, uBass, uMid, uHigh, uLevel, uBeat, uHue, uMood;
 uniform float uFxT, uSpeed, uShatterT, uShatterSeed, uFigures, uCloak;
 uniform float uStage, uBreakKind, uWatchers;
+uniform float uCalm;  // quiet the trip's own colour overlays (a dimension, or firework-watching)
+uniform float uSpread;  // how wide a slice of the spectrum (music-reactive): small = a cohesive scheme, 1 = full rainbow
 uniform float uIntro;  // 1 just after a picture is dropped: leave it be for now
 uniform vec3 uSeedPal[3];  // a dropped picture's three main colours...
 uniform float uSeedMix;     // ...and how much they colour everything  // the trip's stage; how a drop breaks through (glass / white light / torn curtain); the peripheral watchers
@@ -71,6 +76,7 @@ vec3 seedRamp(float t)
 // the same colours as the scene: a rainbow pulled toward pink and green
 vec3 pal(float t)
 {
+    t = uHue + (t - uHue) * uSpread;  // keep colours in a drifting band, not the whole spectrum at once
     vec3 bright = 0.5 + 0.5 * cos(6.2831 * (t + vec3(0.0, 0.33, 0.67)));
     bright = mix(bright, mix(vec3(1.0, 0.2, 0.65), vec3(0.2, 1.0, 0.5), 0.5 + 0.5 * cos(6.2831 * t)), 0.4);
     vec3 dark = vec3(0.32, 0.18, 0.42) + vec3(0.38, 0.32, 0.45) * cos(6.2831 * (t + vec3(0.62, 0.42, 0.18)));
@@ -138,9 +144,10 @@ float edge(vec2 p)
 }
 
 // ---- CAMERA: where this pixel looks, for one move
-vec2 move(int cam, float tt, vec2 p)
+vec2 move(int cam, float tt, float w, vec2 p)
 {
-    float t = tt, k = smoothstep(0.0, 0.8, t);  // each move eases in
+    float t = tt, k = w * w * (3.0 - 2.0 * w);  // how much of it: eased in and out
+    vec2 p0 = p;
     vec2 o = vec2(0.0);
     float z = 1.0, a = 0.0;
     vec2 bl = vec2(0.0);
@@ -150,21 +157,21 @@ vec2 move(int cam, float tt, vec2 p)
         p *= 1.0 + 1.4 * s * dot(p, p);
         z = 1.0 + 0.4 * s;
     } else if (cam == 2) {  // crash zoom on every kick
-        z = 1.0 + 1.3 * uBeat;
-        rd = 0.22 * uBeat;
-    } else if (cam == 3) {  // whip pan: snapping sideways to a new view, smeared
-        float w = fract(t / 1.8);
-        o.x = (floor(t / 1.8) + smoothstep(0.0, 0.22, w)) * asp * 1.1;
-        bl = vec2(0.35 * sin(PI * clamp(w / 0.22, 0.0, 1.0)), 0.0);
+        z = 1.0 + 1.1 * uCamBeat;
+        rd = 0.2 * uCamBeat;
+    } else if (cam == 3) {  // whip pan: swooping sideways to a new view, smeared
+        float ph = fract(t / 1.8);
+        o.x = (floor(t / 1.8) + smoothstep(0.0, 0.5, ph)) * asp * 1.1;  // (a swoop, not a cut)
+        bl = vec2(0.25 * sin(PI * clamp(ph / 0.5, 0.0, 1.0)), 0.0);
     } else if (cam == 4) {  // barrel roll
-        a = t * 1.1 + uBass * 0.4;
+        a = t * 1.1 + uCamBass * 0.4;
         z = 1.15;
     } else if (cam == 5) {  // Dutch angle, snapping to a new tilt now and then
         float seg = floor(t / 2.4);
-        a = mix(hash(vec2(seg - 1.0, 1.0)) - 0.5, hash(vec2(seg, 1.0)) - 0.5, ease(fract(t / 2.4) * 5.0)) * 0.9;
+        a = mix(hash(vec2(seg - 1.0, 1.0)) - 0.5, hash(vec2(seg, 1.0)) - 0.5, smoothstep(0.0, 0.6, fract(t / 2.4))) * 0.9;
         z = 1.2;
     } else if (cam == 6) {  // shaky cam, worse on the bass
-        o = (vec2(noise(vec2(t * 7.0, 0.0)), noise(vec2(0.0, t * 7.0 + 3.0))) - 0.5) * (0.05 + 0.08 * uBass);
+        o = (vec2(noise(vec2(t * 7.0, 0.0)), noise(vec2(0.0, t * 7.0 + 3.0))) - 0.5) * (0.05 + 0.08 * uCamBass);
         a = (noise(vec2(t * 5.0, 9.0)) - 0.5) * 0.08;
         z = 1.08;
     } else if (cam == 7) {  // FPV drone: banking, diving, swooping
@@ -172,7 +179,7 @@ vec2 move(int cam, float tt, vec2 p)
         z = 1.2 + 0.2 * sin(t * 1.3);
         o = vec2(0.15 * sin(t * 0.6), 0.08 * sin(t * 1.1));
         p /= 1.0 + 0.25 * sin(t * 0.5) * p.y;
-        rd = 0.05 + 0.08 * uBass;
+        rd = 0.05 + 0.08 * uCamBass;
     } else if (cam == 8) {  // bullet time: nearly frozen, the camera circling
         a = t * 0.4;
         z = 1.25 + 0.1 * sin(t * 0.3);
@@ -203,25 +210,25 @@ vec2 move(int cam, float tt, vec2 p)
         p /= 1.0 + 0.9 * sin(t * 0.35) * p.y;
         z = 1.2;
     } else if (cam == 17) { // portal: a ring opens and you go through it
-        float w = fract(t / 3.0), R = w * w * 1.8, r = length(p);
-        if (r < R) p *= 0.25 + 0.75 * w;
-        else p /= 1.0 + 3.0 * w * w;
-        rg = exp(-pow((r - R) * 40.0, 2.0)) * (1.0 - w);
-        rd = 0.12 * w;
+        float ph = fract(t / 3.0), R = ph * ph * 1.8, r = length(p);
+        if (r < R) p *= 0.25 + 0.75 * ph;
+        else p /= 1.0 + 3.0 * ph * ph;
+        rg = exp(-pow((r - R) * 40.0, 2.0)) * (1.0 - ph);
+        rd = 0.12 * ph;
     } else if (cam == 18) { // zoom in, turning
         z = 1.3 + 0.3 * sin(t * 0.35);
         a = 0.1 * t;
-        rd = 0.1 + 0.1 * uBass;
+        rd = 0.1 + 0.1 * uCamBass;
     } else if (cam == 19) { // parallax: bright things are near, so they slide more
         p.x += sin(t * 0.8) * 0.07 * luma(S(p));
     } else if (cam == 20) { // lazy susan: the world on a turntable
         p.y *= 1.6;
         a = t * 0.6;
     } else if (cam == 21) { // square turns: the whole view snaps round 90 degrees
-        a = (floor(t / 3.0) + ease(fract(t / 3.0) * 4.0)) * PI * 0.5;
+        a = (floor(t / 3.0) + smoothstep(0.0, 0.55, fract(t / 3.0))) * PI * 0.5;
         z = 1.25;
     } else if (cam == 22) { // bolt cam: robot-arm lunges, dead stops
-        float seg = floor(t / 1.3), e = ease(fract(t / 1.3) * 7.0);
+        float seg = floor(t / 1.3), e = smoothstep(0.0, 0.45, fract(t / 1.3));
         vec3 A = vec3(hash(vec2(seg - 1.0, 2.0)) - 0.5, (hash(vec2(seg - 1.0, 3.0)) - 0.5) * 0.8, 1.0 + 0.8 * hash(vec2(seg - 1.0, 4.0)));
         vec3 C = vec3(hash(vec2(seg, 2.0)) - 0.5, (hash(vec2(seg, 3.0)) - 0.5) * 0.8, 1.0 + 0.8 * hash(vec2(seg, 4.0)));
         vec3 m = mix(A, C, e) * vec3(0.5, 0.5, 1.0);
@@ -235,6 +242,12 @@ vec2 move(int cam, float tt, vec2 p)
         z = 1.0 + 0.15 * sin(t * 0.5);
         rd = 0.05;
     }
+    // the bends this move made to the picture, only as much as it's faded in
+    p = mix(p0, p, k);
+    // spins and drifts the short way round: the picture repeats (mirrored) every 2 across and 2*asp
+    // along, and a turn every 2 pi, so a move fading out never has far to unwind
+    a = mod(a + PI, 2.0 * PI) - PI;
+    o = vec2(mod(o.x + asp, 2.0 * asp) - asp, mod(o.y + 1.0, 2.0) - 1.0);
     gBlur += bl * k;
     gRad += rd * k;
     gRing = max(gRing, rg * k);
@@ -246,8 +259,8 @@ vec2 camera(vec2 p)
     gBlur = vec2(0.0);
     gRad = 0.0;
     gRing = 0.0;
-    for (int i = 0; i < 4; i++)
-        if (uCams[i] > 0) p = move(uCams[i], uCamTs[i], p);
+    for (int i = 0; i < 8; i++)
+        if (uCams[i] > 0 && uCamWs[i] > 0.001) p = move(uCams[i], uCamTs[i], uCamWs[i], p);
     gRad = min(gRad, 0.35);
     return p;
 }
@@ -745,15 +758,15 @@ vec3 mandalaBurst(vec2 p, vec4 Bu, float a)
         d = min(d, abs(length(f - vec2(0.5, 0.0)) - 0.5));
         d = min(d, sdSeg(f, vec2(0.0), vec2(1.0, 0.0)));
         float ds = d * scale;  // how far, on screen
-        float glow = (exp(-ds * ds * 250000.0) * 1.4 + 0.00025 / (ds + 0.006)) * smoothstep(1.25, 0.95, r);
+        float stroke = smoothstep(2.2 * px, 0.7 * px, ds) * smoothstep(1.25, 0.95, r);  // a crisp drawn line, not a glow
         vec3 k = hyperCol(Bu.w + fl * 0.33 + r * 0.4 + a * 0.6);
-        k *= 0.75 + 0.5 * cos(6.2831 * (fa * 3.0 + r * 2.0 - uTime * 1.5 + vec3(0.0, 0.33, 0.67)));  // iridescent
-        c += k * glow * (1.0 - fl * 0.25);
+        k *= 0.75 + 0.5 * cos(6.2831 * (fa * 3.0 + r * 2.0 - uTime * 1.5 + vec3(0.0, 0.33, 0.67)));  // iridescent ink
+        c += k * stroke * (1.0 - fl * 0.25);
         q = (f - vec2(1.0, 0.0)) / 0.36;  // on to the copy at the petal tip
         scale *= 0.36;
     }
-    c += vec3(1.6, 1.5, 1.3) * exp(-length(p - Bu.xy) / (0.01 + R * 0.02)) * 1.5 * exp(-a * 3.0);  // white-hot heart
-    return c * smoothstep(0.0, 0.06, a) * (1.0 - smoothstep(1.2, 3.5, R)) * 0.3;  // fading as it passes through you
+    c += vec3(1.3, 1.25, 1.1) * smoothstep(2.5 * px, 1.0 * px, length(p - Bu.xy)) * exp(-a * 3.0);  // a small inked heart-dot, no halo
+    return c * smoothstep(0.0, 0.06, a) * (1.0 - smoothstep(1.2, 3.5, R)) * 0.42;  // crisp, not blown out, so bloom won't re-glow it
 }
 // the other kind, from the reports: "rapidly multiplying squares shower my vision as they explode in every
 // direction: left, right, up, down, then suddenly backwards and forwards", "white strings of light double
@@ -800,9 +813,68 @@ vec3 cubeBurst(vec2 p, vec4 Bu, float a)
                 int w = v ^ (1 << b);
                 if (w > v) dmin = min(dmin, sdSeg(p, V[v], V[w]));
             }
-        c += popcorn[int(mod(fi + floor(Bu.w * 30.0), 3.0))] * (exp(-dmin * dmin * 160000.0) * 1.5 + 0.0002 / (dmin + 0.004));
+        c += popcorn[int(mod(fi + floor(Bu.w * 30.0), 3.0))] * smoothstep(2.2 * px, 0.7 * px, dmin);  // crisp wireframe stroke, not a glow
     }
-    return c * 0.5 * smoothstep(0.0, 0.04, a) * (1.0 - smoothstep(1.1, 1.8, a));
+    return c * 0.55 * smoothstep(0.0, 0.04, a) * (1.0 - smoothstep(1.1, 1.8, a));
+}
+
+// a rose / spirograph bloom: petals traced in line, turning as it grows
+vec3 roseBurst(vec2 p, vec4 Bu, float a)
+{
+    float R = 0.06 * exp(a * 2.5);
+    vec2 q = (p - Bu.xy) / R;
+    float rr = length(q);
+    if (rr > 1.35) return vec3(0.0);
+    float spin = fract(Bu.w * 5.0) < 0.5 ? 1.0 : -1.0;
+    float th = atan(q.y, q.x) + a * 1.4 * spin;
+    float k = floor(3.0 + fract(Bu.w * 13.0) * 4.0);          // 3..6 petals
+    vec3 c = vec3(0.0);
+    for (int i = 0; i < 2; i++) {
+        float rose = (1.0 - 0.45 * float(i)) * abs(cos(k * th));
+        float ds = abs(rr - rose) * R;
+        c += hyperCol(Bu.w + rr * 0.5 + a * 0.6 + float(i) * 0.2) * smoothstep(2.2 * px, 0.7 * px, ds) * (1.0 - float(i) * 0.3);
+    }
+    c *= smoothstep(1.35, 1.1, rr);
+    c += vec3(1.3, 1.25, 1.1) * smoothstep(2.5 * px, 1.0 * px, length(p - Bu.xy)) * exp(-a * 3.0);
+    return c * smoothstep(0.0, 0.06, a) * (1.0 - smoothstep(1.2, 3.5, R)) * 0.42;
+}
+
+// concentric rotating polygon rings, like opening portals
+vec3 ringBurst(vec2 p, vec4 Bu, float a)
+{
+    float R = 0.06 * exp(a * 2.5);
+    vec2 q = (p - Bu.xy) / R;
+    float rr = length(q);
+    if (rr > 1.4) return vec3(0.0);
+    float n = floor(3.0 + fract(Bu.w * 11.0) * 5.0);          // 3..7 sides
+    float seg = 6.2831 / n, dir = fract(Bu.w * 3.0) < 0.5 ? 1.0 : -1.0;
+    vec3 c = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+        float ri = 0.28 + 0.3 * float(i);
+        float ang = atan(q.y, q.x) + a * (0.8 + 0.3 * float(i)) * dir;
+        float poly = ri / cos(mod(ang, seg) - seg * 0.5);     // the n-gon's edge at this angle
+        c += hyperCol(Bu.w + float(i) * 0.25 + a * 0.5) * smoothstep(2.0 * px, 0.6 * px, abs(rr - poly) * R);
+    }
+    c *= smoothstep(1.4, 1.15, rr);
+    c += vec3(1.3, 1.25, 1.1) * smoothstep(2.5 * px, 1.0 * px, length(p - Bu.xy)) * exp(-a * 3.0);
+    return c * smoothstep(0.0, 0.06, a) * (1.0 - smoothstep(1.2, 3.5, R)) * 0.42;
+}
+
+// spiral arms unwinding outward
+vec3 spiralBurst(vec2 p, vec4 Bu, float a)
+{
+    float R = 0.06 * exp(a * 2.5);
+    vec2 q = (p - Bu.xy) / R;
+    float rr = length(q);
+    if (rr > 1.4) return vec3(0.0);
+    float arms = floor(2.0 + fract(Bu.w * 7.0) * 4.0);        // 2..5 arms
+    float dir = fract(Bu.w * 3.0) < 0.5 ? 1.0 : -1.0;
+    float ph = (atan(q.y, q.x) * dir * arms + 13.0 * rr - a * 5.0) / 6.2831;  // winding phase
+    float d = min(fract(ph), 1.0 - fract(ph));
+    float stroke = (1.0 - smoothstep(0.0, fwidth(ph) * 1.3, d)) * smoothstep(1.4, 1.1, rr) * smoothstep(0.05, 0.22, rr);
+    vec3 c = hyperCol(Bu.w + rr * 0.8 + a * 0.5) * stroke;
+    c += vec3(1.3, 1.25, 1.1) * smoothstep(2.5 * px, 1.0 * px, length(p - Bu.xy)) * exp(-a * 3.0);
+    return c * smoothstep(0.0, 0.06, a) * (1.0 - smoothstep(1.2, 3.5, R)) * 0.42;
 }
 
 // the watchers: heads at the edges of your vision, alternately outlined black and white, peering in and
@@ -826,6 +898,11 @@ void main()
     px = 1.0 / uRes.y;
     vec2 p0 = (gl_FragCoord.xy / uRes - 0.5) * vec2(asp, 1.0);
     vec2 p = camera(p0);
+    if (uCamTest > 0) {  // (testing: what the camera alone is doing)
+        vec2 g = floor(p * 6.0);
+        frag = vec4(vec3(mod(g.x + g.y, 2.0)) * 0.8 + 0.1 * vec3(fract(p * 0.5), 0.0), 1.0);
+        return;
+    }
 
     // ripples of light from the kicks, bending the picture as they pass
     vec2 bend = vec2(0.0);
@@ -865,21 +942,21 @@ void main()
     col += pal(uHue + 0.5) * ring * 0.6 + vec3(gRing) * 1.5;
 
     // the onset (the come-up): what so many reports describe before anything else
-    float on = (1.0 - smoothstep(0.5, 1.3, uStage)) * (1.0 - uIntro);
+    float on = (1.0 - smoothstep(0.5, 1.3, uStage)) * (1.0 - uIntro) * (1.0 - uCalm);  // no onset rainbow over a quieted scene
     if (on > 0.01) {
         vec2 o = vec2(0.006 + 0.01 * uBass, 0.0);  // red/green double images, like 3D glasses
         col = mix(col, vec3(S(p + o).r, S(p - o).g, col.b), 0.55 * on);
         float e = edge(p);
         vec3 rb = 0.5 + 0.5 * cos(6.2831 * (p0.x * 1.5 + p0.y + uTime * 0.4 + vec3(0.0, 0.33, 0.67)));
-        col += rb * smoothstep(0.1, 0.5, e) * on * 0.9;  // edges splitting into rainbow fringes...
-        col = mix(col, rb * fbm(p * 30.0 + uTime * 2.0) * 2.0, smoothstep(0.5, 1.0, e) * on * uLevel);  // ...breaking open into rainbow noise
+        col += rb * smoothstep(0.1, 0.5, e) * on * 0.9 * uSpread;  // edges splitting into rainbow fringes (only as the palette widens)...
+        col = mix(col, rb * fbm(p * 30.0 + uTime * 2.0) * 2.0, smoothstep(0.5, 1.0, e) * on * uLevel * uSpread);  // ...breaking open into rainbow noise
         col *= 1.0 - smoothstep(0.45, 0.7, e) * 0.85 * on;  // comic-book outlines: a bold black line...
         col += smoothstep(0.8, 1.1, e) * on * 0.8;           // ...around a finer white one
         float band = mod(floor(gl_FragCoord.y / 4.0), 3.0);  // venetian-blind seams tinting red, green, blue in turn
-        col *= mix(vec3(1.0), band < 0.5 ? vec3(1.25, 0.85, 0.85) : (band < 1.5 ? vec3(0.85, 1.25, 0.85) : vec3(0.85, 0.85, 1.25)), 0.2 * on);
+        col *= mix(vec3(1.0), band < 0.5 ? vec3(1.25, 0.85, 0.85) : (band < 1.5 ? vec3(0.85, 1.25, 0.85) : vec3(0.85, 0.85, 1.25)), 0.2 * on * uSpread);
         float cy = fract(uTime / 3.0) * 3.0;  // the room's tint cycling purple, green, red within seconds
         vec3 tint = cy < 1.0 ? mix(vec3(0.8, 0.3, 1.0), vec3(0.3, 1.0, 0.4), cy) : (cy < 2.0 ? mix(vec3(0.3, 1.0, 0.4), vec3(1.0, 0.3, 0.3), cy - 1.0) : mix(vec3(1.0, 0.3, 0.3), vec3(0.8, 0.3, 1.0), cy - 2.0));
-        col *= mix(vec3(1.0), tint * 1.3, 0.3 * on);
+        col *= mix(vec3(1.0), tint * 1.3, 0.3 * on * uSpread);  // the room's tint cycle only when the palette is wide
         float corner = smoothstep(0.75, 1.15, length(gl_FragCoord.xy / uRes * 2.0 - 1.0));  // a flickering static veil, thickest in the corners
         col = mix(col, vec3(step(0.5, hash(gl_FragCoord.xy + floor(uTime * 30.0) * 13.1))), corner * on * 0.2 * (0.6 + 0.4 * sin(uTime * 13.0)));
     }
@@ -948,11 +1025,23 @@ void main()
         col += mix(vec3(0.9, 1.0, 1.0), pal(uHue + 0.3), 0.4) * g * uFigures * (0.6 + 0.4 * noise(p0 * 20.0 + uTime * 4.0)) * 1.4;
     }
     // fireworks
+    vec3 fw = vec3(0.0);
     for (int b = 0; b < 16; b++) {
         float a = uTime - uBursts[b].z;
         a = floor(a * 18.0) / 18.0;  // moving in digital steps, "animated at 99 frames per second"
-        if (a >= 0.0 && a < 1.8) col += uBursts[b].w < 0.5 ? mandalaBurst(p0, vec4(uBursts[b].xyz, uBursts[b].w * 2.0), a) : cubeBurst(p0, uBursts[b], a);
+        if (a >= 0.0 && a < 1.8) {
+            float w = uBursts[b].w;
+            vec4 B = vec4(uBursts[b].xyz, fract(w * 7.919));  // a per-burst variation for whichever type
+            if      (w < 0.28) fw += mandalaBurst(p0, B, a);
+            else if (w < 0.46) fw += cubeBurst(p0, B, a);
+            else if (w < 0.64) fw += roseBurst(p0, B, a);
+            else if (w < 0.82) fw += ringBurst(p0, B, a);
+            else               fw += spiralBurst(p0, B, a);
+        }
     }
+    // keep the bursts in the same drifting band as everything else: calm = the scene's hue, energy = their own blue/pink/gold
+    fw = mix(dot(fw, vec3(0.333)) * pal(uHue) * 2.0, fw, clamp(uSpread * 1.8, 0.0, 1.0));
+    col += fw;
     if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
     frag = vec4(clamp(col, 0.0, 64.0), 1.0);
 }

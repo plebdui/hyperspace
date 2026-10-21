@@ -14,8 +14,9 @@
 struct Rgb { float r, g, b; };
 
 // the scene shader's colours (same formula), so the lines match
-inline Rgb palette(float t, float mood)
+inline Rgb palette(float t, float mood, float base = 0.0f, float spread = 1.0f)
 {
+    t = base + (t - base) * spread;  // keep the wireframes' colours in the same drifting band as the scene
     auto c = [](float a, float b, float x) { return a + b * std::cos(6.2831f * x); };
     Rgb bright = {c(0.5f, 0.5f, t), c(0.5f, 0.5f, t + 0.33f), c(0.5f, 0.5f, t + 0.67f)};
     const float k = 0.5f + 0.5f * std::cos(6.2831f * t);  // pulled toward pink and green

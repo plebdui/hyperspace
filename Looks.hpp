@@ -36,11 +36,17 @@ struct Looks {
     float fxT = 0, fxLen = 10;
     int cams[kStack] = {0, 0, 0, 0};       // the stacked camera moves (0 = an empty slot)
     float camTs[kStack] = {0, 0, 0, 0}, camLens[kStack] = {0, 0, 0, 0};
-    float timeScale = 1, speed = 1;  // slow motion / bullet time / speed ramps slow the whole trip
+    float camWs[kStack] = {0, 0, 0, 0};    // how far in each move has faded (0..1)
+    // a move that's been replaced fades out in its own slot while the new one fades in: they morph
+    int outCams[kStack] = {0, 0, 0, 0};
+    float outTs[kStack] = {0, 0, 0, 0}, outWs[kStack] = {0, 0, 0, 0};
+    static constexpr float kFade = 1.6f;  // seconds to fade a move in or out
+    float timeScale = 1, speed = 1, camBeat = 0, camBass = 0;  // slow motion / bullet time / speed ramps slow the whole trip
     float shatterT = -1, sinceShatter = 99, shatterSeed = 0, figures = 0, cloak = 0, watchers = 0;
     int breakKind = 0;  // how a drop breaks through: 0 glass shatter, 1 white light, 2 torn curtain
     bool grabNow = false;
     bool forceFire = false;  // (testing: keep the fireworks going)  // keep this frame (for the shards, or the cinemagraph's still)
+    bool solo = false;       // firework-watching mode: fire one at a time, spaced out, trip quieted (key B)
     static const int kBursts = 16;
     float bursts[kBursts][4], ripples[6][3];
     int nb = 0, nr = 0;
@@ -53,6 +59,14 @@ struct Looks {
         for (auto& r : ripples) r[2] = -100;
     }
     float rnd() { rng = rng * 1664525u + 1013904223u; return (rng >> 8) / 16777216.0f; }
+    void setCam(int i, int c)
+    {
+        if (cams[i] == c) return;
+        if (cams[i]) { outCams[i] = cams[i]; outTs[i] = camTs[i]; outWs[i] = camWs[i]; }
+        cams[i] = c;
+        camTs[i] = 0;
+        camWs[i] = 0;
+    }
     // a camera move that isn't already in the stack
     int pickCam()
     {
@@ -77,7 +91,12 @@ struct Looks {
     {
         grabNow = false;
         fxT += dt;
-        for (float& t : camTs) t += dt;
+        for (int i = 0; i < kStack; ++i) {
+            camTs[i] += dt;  // (a fading-out move holds still: it just settles back)
+            camWs[i] = cams[i] ? std::min(1.0f, camWs[i] + dt / kFade) : 0.0f;
+            outWs[i] = std::max(0.0f, outWs[i] - dt / kFade);
+            if (outWs[i] == 0) outCams[i] = 0;
+        }
         sinceGrab += dt;
         // pick: a drop changes things (not too often), otherwise every 10-20 s; sometimes nothing at all
         if (forcedFx >= 0) {
@@ -90,17 +109,18 @@ struct Looks {
         }
         if (fx == kCinemagraph && sinceGrab > 8) grabNow = true;
         if (forcedCam >= 0) {  // by hand: just that one
-            if (cams[0] != forcedCam) { cams[0] = forcedCam; camTs[0] = 0; }
-            for (int i = 1; i < kStack; ++i) cams[i] = 0;
+            setCam(0, forcedCam);
+            for (int i = 1; i < kStack; ++i) setCam(i, 0);
         } else {
             // how many at once: 2, a 3rd deeper in, a 4th when it's loud
             const int want = 2 + (stage > 1.5f) + (f.level > 0.6f);
             const bool reshuffle = f.drop && camTs[0] > 3;
             for (int i = 0; i < kStack; ++i) {
-                if (i >= want) { if (cams[i] && camTs[i] > 2) cams[i] = 0; continue; }  // (let extras finish a bit first)
+                if (i >= want) { if (cams[i] && camTs[i] > 2 && !outCams[i]) setCam(i, 0); continue; }  // (let extras finish a bit first)
+                // (a slot still fading out its last move waits for it, so no move is cut off mid-fade)
+                if (outCams[i]) continue;
                 if (!cams[i] || reshuffle || camTs[i] > camLens[i] || (f.beat > 0.999f && rnd() < 0.06f)) {
-                    cams[i] = pickCam();
-                    camTs[i] = 0;
+                    setCam(i, pickCam());
                     camLens[i] = 5 + 9 * rnd();
                 }
             }
@@ -111,7 +131,9 @@ struct Looks {
             else if (c == 9) target = std::min(target, 0.35f);
             else if (c == 10) target = std::min(target, f.beat > 0.4f ? 2.5f : 0.3f);
         }
-        speed += (target - speed) * std::min(1.0f, dt * 6);
+        speed += (target - speed) * std::min(1.0f, dt * 2.5f);  // (lurching, but never in one frame)
+        camBeat += (f.beat - camBeat) * std::min(1.0f, dt * 11);
+        camBass += (std::min(f.bass, 2.5f) * 0.6f - camBass) * std::min(1.0f, dt * 5);
         timeScale = speed;
 
         // ripples on the kicks, fireworks when the highs jump
@@ -124,11 +146,12 @@ struct Looks {
         // fireworks: a jump in the highs fires one, and while the highs stay up they rapid-fire,
         // each from a point of the last, so they chain and cascade (some straight down the middle)
         sinceBurst += dt;
-        const bool spike = f.high > 1.5f && lastHigh <= 1.5f, held = f.high > 1.3f || forceFire;
-        if ((spike || held) && sinceBurst > (spike ? 0.08f : burstGap)) {
+        const bool spike = f.high > 1.7f && lastHigh <= 1.7f, held = f.high > 1.7f || forceFire || solo;  // only real peaks
+        const float gap = solo ? 1.1f : (spike ? 0.5f : burstGap);  // occasional: never machine-gun; solo: one at a time
+        if ((spike || held) && sinceBurst > gap) {
             const float* last = bursts[(nb + kBursts - 1) % kBursts];
             float x = 0, y = 0;
-            if (rnd() > 0.3f && now - last[2] < 1) {
+            if (!solo && rnd() > 0.3f && now - last[2] < 1) {  // solo keeps them centred, not chaining off to the edges
                 const float an = std::floor(rnd() * 8) * 0.785398f;
                 x = last[0] + 0.3f * std::cos(an);
                 y = last[1] + 0.3f * std::sin(an);
@@ -141,7 +164,7 @@ struct Looks {
             bursts[nb][3] = rnd();
             nb = (nb + 1) % kBursts;
             sinceBurst = 0;
-            burstGap = 0.08f + 0.07f * rnd();
+            burstGap = 0.7f + 0.6f * rnd();  // held bursts re-fire only every ~0.7-1.3s, so they stay occasional
         }
         lastHigh = f.high;
 

@@ -42,6 +42,8 @@ keys:
   M         next mirror                     come-up, chrysanthemum, breakthrough, hyperspace
   P         next pattern          E         next entity
   V         next picture effect   C         one camera move at a time (0: back to the stack)
+  7 8 9     fly into an extra dimension: pillars, forest, corridor (press again to leave)
+  B         watch the fireworks on their own (one at a time, the trip quieted)
   0         hand it all back to the music
   [ ]       less / more sharp     Esc / Q   quit
 )";
@@ -171,9 +173,10 @@ int main(int argc, char** argv)
     Capture::Source src = Capture::kSpeakers;
     bool fullscreen = false;
     float scale = 0.75f;
-    int forceStage = -1, forceEntity = -1, forceMirror = -1, forcePattern = -1, forceFx = -1, forceCam = -1;
+    int forceStage = -1, forceEntity = -1, forceMirror = -1, forcePattern = -1, forceFx = -1, forceCam = -1, forceDim = -1;
     std::string shotPath, mediaPath;  // testing: --shot file --at seconds (then quit)
     float shotAt = 5;
+    int seqFrame = 0;  // (testing: HYPERSPACE_SEQ)
     int width = 1280, height = 720;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -188,6 +191,7 @@ int main(int argc, char** argv)
         else if (a == "--pattern") forcePattern = std::atoi(next());
         else if (a == "--fx") forceFx = std::atoi(next()) % kNumFx;
         else if (a == "--cam") forceCam = std::atoi(next()) % kNumCams;
+        else if (a == "--dim") forceDim = std::clamp(std::atoi(next()), 0, 3);
         else if (a == "--shot") shotPath = next();
         else if (a == "--media") mediaPath = next();
         else if (a == "--at") shotAt = (float)std::atof(next());
@@ -275,6 +279,11 @@ int main(int argc, char** argv)
     std::vector<float> samples(Analysis::kN);
     std::string dropped = mediaPath;
     float clock = 0, time = 0, hue = 0, zoom = 0, spin = 0, status = 0, turn4[6] = {0, 0, 0, 0, 0, 0};
+    int dim = forceDim >= 0 ? forceDim : 0;  // extra dimension: 0 none, 1 pillars, 2 forest, 3 corridor
+    float dimAmt = 0;                         // how far it has faded in
+    bool burstFocus = std::getenv("HYPERSPACE_SOLO") != nullptr;  // key B: watch the fireworks (solo + the trip quieted); env for testing
+    float focusAmt = 0, calm = 0;             // focusAmt fades the firework-watching in; calm = how much to quiet the trip's overlays
+    float spread = 0.35f;                     // how wide a slice of the spectrum the palette uses: grows with the music's energy
     uint64_t last = SDL_GetTicksNS();
     int frames = 0;
     bool run = true;
@@ -288,7 +297,11 @@ int main(int argc, char** argv)
             if (k == SDLK_ESCAPE || k == SDLK_Q) run = false;
             else if (k == SDLK_F || k == SDLK_F11) { fullscreen = !fullscreen; SDL_SetWindowFullscreen(win, fullscreen); }
             else if (k >= SDLK_1 && k <= SDLK_4) trip.forcedStage = (int)(k - SDLK_1);
-            else if (k == SDLK_0) trip.forcedStage = trip.forcedEntity = show.forcedMirror = show.forcedPattern = looks.forcedFx = looks.forcedCam = -1;
+            else if (k == SDLK_7) dim = (dim == 1 ? 0 : 1);  // pillars
+            else if (k == SDLK_8) dim = (dim == 2 ? 0 : 2);  // forest
+            else if (k == SDLK_9) dim = (dim == 3 ? 0 : 3);  // corridor
+            else if (k == SDLK_B) burstFocus = !burstFocus;  // watch the fireworks on their own
+            else if (k == SDLK_0) { trip.forcedStage = trip.forcedEntity = show.forcedMirror = show.forcedPattern = looks.forcedFx = looks.forcedCam = -1; dim = 0; }
             else if (k == SDLK_V) looks.forcedFx = (looks.fx + 1) % kNumFx;
             else if (k == SDLK_C) looks.forcedCam = (looks.forcedCam < 0 ? 1 : looks.forcedCam + 1) % kNumCams;
             else if (k == SDLK_E) trip.forcedEntity = (trip.entity + 1) % kNumEntities;
@@ -338,6 +351,12 @@ int main(int argc, char** argv)
         trip.update(f, dt);
         show.update(f, trip.stage, dt);
         looks.update(f, trip.stage, clock, dt);
+        if (const char* ob = std::getenv("HYPERSPACE_ONEBURST")) {  // testing: one centred burst, age = env value, kind (w) = HYPERSPACE_ONEKIND
+            for (auto& b : looks.bursts) b[2] = -100.f;
+            looks.bursts[0][0] = 0.f; looks.bursts[0][1] = 0.f;
+            looks.bursts[0][2] = clock - (float)std::atof(ob);
+            looks.bursts[0][3] = std::getenv("HYPERSPACE_ONEKIND") ? (float)std::atof(std::getenv("HYPERSPACE_ONEKIND")) : 0.1f;
+        }
         if (const char* at = std::getenv("HYPERSPACE_SHATTER_AT"); at && clock >= std::atof(at) && clock - dt < std::atof(at)) {
             looks.shatterT = 0;  // (testing: shatter now)
             if (const char* k = std::getenv("HYPERSPACE_BREAK")) looks.breakKind = std::atoi(k);
@@ -349,6 +368,12 @@ int main(int argc, char** argv)
         hue += sdt * (0.015f + 0.05f * f.mid);
         zoom += sdt * (0.25f + 0.9f * f.bass) * (0.3f + weight(trip.stage, 2));
         spin += sdt * (0.04f + 0.15f * f.high);
+        dimAmt += ((dim > 0 ? 1.0f : 0.0f) - dimAmt) * (1.0f - std::exp(-dt / 0.6f));  // fade the extra dimension in and out
+        looks.solo = burstFocus;
+        focusAmt += ((burstFocus ? 1.0f : 0.0f) - focusAmt) * (1.0f - std::exp(-dt / 0.4f));  // fade firework-watching in and out
+        calm = std::max(dimAmt, focusAmt);  // either one quiets the trip's colour overlays
+        const float spreadT = std::clamp(0.1f + 0.28f * f.level + 0.15f * f.beat, 0.1f, 0.45f);  // a cohesive slice of the spectrum; widens a little on energy, but never the full rainbow
+        spread += (spreadT - spread) * (1.0f - std::exp(-dt / 0.6f));
         for (int k = 0; k < 6; ++k) turn4[k] += sdt * (0.05f + 0.07f * k) * (0.6f + 0.6f * f.mid + 0.8f * f.beat);
         const float gridSpeed = sdt * (0.8f + 2.0f * f.bass);  // walking the grid, the way it faces
         gridX += std::sin(looks.gridTurn) * gridSpeed;
@@ -403,8 +428,13 @@ int main(int argc, char** argv)
         glUniform1i(U(scene, "uEntity"), trip.entity);
         glUniform1f(U(scene, "uMood"), f.mood);
         glUniform1f(U(scene, "uHue"), hue);
+        glUniform1f(U(scene, "uSpread"), spread);
         glUniform1f(U(scene, "uZoom"), zoom);
         glUniform1f(U(scene, "uSpin"), spin);
+        glUniform1f(U(scene, "uDim"), (float)dim);
+        glUniform1f(U(scene, "uDimAmt"), dimAmt);
+        glUniform1f(U(scene, "uCalm"), calm);
+        glUniform1f(U(scene, "uFocus"), focusAmt);
         glUniform1i(U(scene, "uPatA"), show.patA);
         glUniform1i(U(scene, "uPatB"), show.patB);
         glUniform1f(U(scene, "uPatT"), show.patT);
@@ -419,7 +449,7 @@ int main(int argc, char** argv)
         glUniform1f(U(scene, "uGridTurn"), looks.gridTurn);
         glUniform2f(U(scene, "uGridPos"), gridX, gridZ);
         glUniform1f(U(scene, "uGridFocus"), std::clamp(trip.stage / 2.5f + 0.2f * f.level, 0.0f, 1.0f));
-        glUniform1f(U(scene, "uPatAmt"), (0.35f + 0.25f * std::min(trip.stage, 2.0f) / 2 + 0.2f * f.beat) * (1 - intro));
+        glUniform1f(U(scene, "uPatAmt"), (0.35f + 0.25f * std::min(trip.stage, 2.0f) / 2 + 0.2f * f.beat) * (1 - intro) * (1 - 0.85f * calm));
         glUniform1f(U(scene, "uIntro"), intro);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         cur = nxt;
@@ -427,19 +457,20 @@ int main(int argc, char** argv)
         // ---- the wireframes, added on top (they'll trail in the next frames)
         wires.clear();
         wires.aspect = (float)sw / sh;
-        const float w0 = weight(trip.stage, 0), w1 = weight(trip.stage, 1), w2 = weight(trip.stage, 2), w3 = weight(trip.stage, 3);
+        const float wk = 1.0f - calm;  // a quieted scene dims the trip's own wireframes so what matters reads clear
+        const float w0 = weight(trip.stage, 0) * wk, w1 = weight(trip.stage, 1) * wk, w2 = weight(trip.stage, 2) * wk, w3 = weight(trip.stage, 3) * wk;
         const float breathe = 1 + 0.12f * bass + 0.1f * f.beat;
-        wires.metatron(0, 0, 0.17f * breathe, spin * 0.5f, palette(hue + 0.4f, f.mood), 0.35f * w0 + 0.7f * w1);
+        wires.metatron(0, 0, 0.17f * breathe, spin * 0.5f, palette(hue + 0.4f, f.mood, hue, spread), 0.35f * w0 + 0.7f * w1);
         static const int midShapes[3] = {14, 13, 17};  // icosahedron, dodecahedron, tesseract
-        wires.polytope(midShapes[show.patA % 3], 0, 0, 0.36f * breathe, turn4, palette(hue + 0.1f, f.mood), 0.8f * w1);
+        wires.polytope(midShapes[show.patA % 3], 0, 0, 0.36f * breathe, turn4, palette(hue + 0.1f, f.mood, hue, spread), 0.8f * w1);
         wires.tunnel(6 + (show.patA % 3) * 2, zoom * 0.5f, spin, hue, f.mood, 1.0f * w2);
         if (w3 > 0) {
-            wires.polytope(trip.entity == kJesters ? 19 : 17, 0, 0, 0.5f * breathe, turn4, palette(hue + 0.6f, f.mood), 0.55f * w3, 0.005f);
+            wires.polytope(trip.entity == kJesters ? 19 : 17, 0, 0, 0.5f * breathe, turn4, palette(hue + 0.6f, f.mood, hue, spread), 0.55f * w3, 0.005f);
             for (int i = 0; i < 6; ++i) {  // a ring of small hypercubes, turning
                 const float an = spin * 0.6f + i * 1.0471976f;
                 float t2[6];
                 for (int k = 0; k < 6; ++k) t2[k] = turn4[k] * (1 + 0.2f * i) + i;
-                wires.polytope(i % 2 ? 18 : 17, std::cos(an) * 0.72f, std::sin(an) * 0.4f, 0.08f * breathe, t2, palette(hue + i * 0.12f, f.mood), 0.7f * w3);
+                wires.polytope(i % 2 ? 18 : 17, std::cos(an) * 0.72f, std::sin(an) * 0.4f, 0.08f * breathe, t2, palette(hue + i * 0.12f, f.mood, hue, spread), 0.7f * w3);
             }
         }
         if (!wires.data.empty()) {
@@ -460,10 +491,11 @@ int main(int argc, char** argv)
         glBindTexture(GL_TEXTURE_2D, sceneT[cur].tex);
         glUniform1i(U(fx, "uScene"), 0);
         glUniform2f(U(fx, "uRes"), (float)sw, (float)sh);
-        glUniform1i(U(fx, "uMirror"), intro > 0.3f ? 0 : show.mirror);
-        glUniform1f(U(fx, "uTrace"), (0.35f + 0.25f * trip.stage / 3 + 0.4f * high) * (1 - 0.8f * intro));
-        glUniform1f(U(fx, "uContrast"), (0.35f + 0.45f * trip.stage / 3) * (1 - intro));
+        glUniform1i(U(fx, "uMirror"), (intro > 0.3f || calm > 0.5f) ? 0 : show.mirror);  // no kaleidoscoping of the lines
+        glUniform1f(U(fx, "uTrace"), (0.35f + 0.25f * trip.stage / 3 + 0.4f * high) * (1 - 0.8f * intro) * (1 - 0.85f * calm));
+        glUniform1f(U(fx, "uContrast"), (0.35f + 0.45f * trip.stage / 3) * (1 - intro) * (1 - 0.7f * calm));
         glUniform1f(U(fx, "uHue"), hue);
+        glUniform1f(U(fx, "uSpread"), spread);
         glUniform1f(U(fx, "uMood"), f.mood);
         glUniform1f(U(fx, "uTurn"), spin * 0.3f);
         glUniform3fv(U(fx, "uSeedPal"), 3, &seedPal[0][0]);
@@ -503,10 +535,23 @@ int main(int argc, char** argv)
         glUniform1i(U(look, "uHist"), 1);
         glUniform1i(U(look, "uFrozen"), 2);
         glUniform1i(U(look, "uHead"), head);
-        static const int kNoCams[Looks::kStack] = {};
-        glUniform1i(U(look, "uFx"), intro > 0.3f ? 0 : looks.fx);  // no film tricks while the picture is still itself
-        glUniform1iv(U(look, "uCams"), Looks::kStack, intro > 0.3f ? kNoCams : looks.cams);
-        glUniform1fv(U(look, "uCamTs"), Looks::kStack, looks.camTs);
+        glUniform1i(U(look, "uFx"), (intro > 0.3f || calm > 0.5f) ? 0 : looks.fx);  // no film tricks while the picture is still itself, or in a quieted scene
+        {   // the camera moves (and the ones fading out); all faded down while a dropped picture is itself
+            int cs[2 * Looks::kStack];
+            float ts[2 * Looks::kStack], ws[2 * Looks::kStack];
+            for (int i = 0; i < Looks::kStack; ++i) {
+                // each slot's fading-out move goes just before its new one, where it always was in the chain,
+                // so nothing jumps when a move is swapped
+                cs[2 * i] = looks.outCams[i]; ts[2 * i] = looks.outTs[i]; ws[2 * i] = looks.outWs[i] * (1 - intro) * (1 - 0.8f * calm);
+                cs[2 * i + 1] = looks.cams[i]; ts[2 * i + 1] = looks.camTs[i]; ws[2 * i + 1] = looks.camWs[i] * (1 - intro) * (1 - 0.8f * calm);
+            }
+            glUniform1iv(U(look, "uCams"), 2 * Looks::kStack, cs);
+            glUniform1fv(U(look, "uCamTs"), 2 * Looks::kStack, ts);
+            glUniform1fv(U(look, "uCamWs"), 2 * Looks::kStack, ws);
+            glUniform1i(U(look, "uCamTest"), std::getenv("HYPERSPACE_CAMTEST") ? 1 : 0);
+            glUniform1f(U(look, "uCamBeat"), looks.camBeat);
+            glUniform1f(U(look, "uCamBass"), looks.camBass);
+        }
         glUniform2f(U(look, "uRes"), (float)sw, (float)sh);
         glUniform1f(U(look, "uTime"), clock);
         glUniform1f(U(look, "uBass"), bass);
@@ -515,6 +560,7 @@ int main(int argc, char** argv)
         glUniform1f(U(look, "uLevel"), f.level);
         glUniform1f(U(look, "uBeat"), f.beat);
         glUniform1f(U(look, "uHue"), hue);
+        glUniform1f(U(look, "uSpread"), spread);
         glUniform1f(U(look, "uMood"), f.mood);
         glUniform1f(U(look, "uFxT"), looks.fxT);
         glUniform1f(U(look, "uSpeed"), looks.speed);
@@ -523,6 +569,7 @@ int main(int argc, char** argv)
         glUniform1f(U(look, "uFigures"), looks.figures);
         glUniform1f(U(look, "uCloak"), looks.cloak);
         glUniform1f(U(look, "uStage"), trip.stage);
+        glUniform1f(U(look, "uCalm"), calm);
         glUniform1f(U(look, "uIntro"), intro);
         glUniform1f(U(look, "uBreakKind"), (float)looks.breakKind);
         glUniform1f(U(look, "uWatchers"), looks.watchers);
@@ -567,9 +614,18 @@ int main(int argc, char** argv)
         glUniform2f(U(present, "uRes"), (float)ww, (float)wh);
         glUniform1f(U(present, "uBass"), bass);
         glUniform1f(U(present, "uTime"), time);
-        glUniform1f(U(present, "uBloomAmt"), (0.6f + 0.5f * trip.stage / 3 + 0.4f * f.beat) * (1 - 0.7f * intro));  // a pale picture shouldn't burn out
+        glUniform1f(U(present, "uBloomAmt"), (0.32f + 0.28f * trip.stage / 3 + 0.22f * f.beat) * (1 - 0.7f * intro) * (1 - 0.8f * calm));  // gentler glow so the line detail reads through it
+        glUniform1f(U(present, "uCalm"), calm);
+        glUniform1f(U(present, "uSpread"), spread);
         glDrawArrays(GL_TRIANGLES, 0, 3);
 
+        if (const char* seq = std::getenv("HYPERSPACE_SEQ"); seq && !shotPath.empty() && clock * 30 >= seqFrame) {  // (testing: every 30th of a second, to check motion)
+            glBindFramebuffer(GL_FRAMEBUFFER, shotT.fbo);
+            char name[512];
+            std::snprintf(name, sizeof(name), "%s/%05d.ppm", seq, seqFrame++);
+            if (std::getenv("HYPERSPACE_SEQLOG")) std::printf("%d %s | beat %.2f\n", seqFrame - 1, looks.camNames().c_str(), f.beat);
+            saveShot(name, ww, wh);
+        }
         if (!shotPath.empty() && clock >= shotAt) {
             glBindFramebuffer(GL_FRAMEBUFFER, shotT.fbo);  // read back the finished picture (without this it sometimes came back black)
             glFinish();
