@@ -29,10 +29,21 @@ static const char* const kScene = R"(#version 330 core
 out vec4 frag;
 uniform vec2 uRes;
 uniform float uTime, uBass, uMid, uHigh, uLevel, uBeat, uStage, uEntityAmt, uMood, uHue, uZoom, uSpin;
-uniform float uDim, uDimAmt;  // extra dimensions: which world (0 none, 1 pillars, 2 forest, 3 corridor) and how far faded in
-uniform float uCalm;          // how much to quiet the trip's colour overlays (a dimension, or firework-watching)
+uniform bool uBlendAll;
+uniform float uSacredTime, uSacredIntensity, uSacredAudio;
+uniform float uDimA, uDimB, uDimMorph, uDimAmt;  // extra dimensions: two worlds (0 none, 1 pillars, 2 forest, 3 corridor, 4 fractal, 5 3D fractal) morphing A->B, and how far faded in
+uniform float uFractal;       // dimension 4 (ported from fractalviz): which fractal
+uniform vec2 uFracCtr, uJuliaC;  // the dive (FracDive.hpp): where it's heading, and Julia's c
+uniform float uFracScale, uFracBase, uFracFade;  // view size, lowest escape count on screen, the dive's fade
+uniform int uFracIt;          // iterations, growing with depth
+uniform float uFracTwin;      // settings: 1 = show the mirrored, upside-down twin below
+uniform float uF3Time, uF3React;  // settings: the 3D fractals' own clock (motion speed) and how much the music bends them
+uniform float uGridAmt;       // settings: how strong the void grid is
+uniform float uWorldZ;        // how far you've flown through a dimension (integrated on the CPU, so speed changes never jump)
+uniform float uFrac3A, uFrac3B, uFrac3M;  // dimension 5: 3D fractal A melting into B (0 Mandelbulb, 1 Menger sponge, 2 Mandelbox, 3 Sierpinski, 4 quaternion Julia, 5 Apollonian), 0..1 how far
+uniform float uCalm;          // how much to quiet the trip's colour overlays (a dimension)
+uniform float uTrailMul;      // settings slider: scales the feedback trail (1 = as the trip sets it)
 uniform float uSpread;        // how wide a slice of the spectrum (music-reactive): small = a cohesive scheme, 1 = full rainbow
-uniform float uFocus;         // firework-watching: darken the base scene so the fireworks stand alone
 uniform int uEntity, uPatA, uPatB;
 uniform float uPatT, uPatAmt;
 uniform float uGridTurn, uGridFocus;
@@ -161,7 +172,7 @@ vec3 voidGrid(vec2 p)
         c += neon * (0.5 + 0.5 * smoothstep(0.5, 0.3, max(g.x, g.y))) * 0.8 * uGridFocus;
     }
     c *= 1.0 + 1.5 * uBeat * exp(-abs(fract(t * 0.15 - uTime * 0.6) - 0.5) * 10.0);  // a surge along the lines on the kick
-    return c * exp(-t * 0.09) * (0.6 + 0.6 * uLevel);
+    return c * exp(-t * 0.09) * (0.6 + 0.6 * uLevel) * uGridAmt;
 }
 
 // ---- 0: COME-UP
@@ -477,7 +488,7 @@ vec4 watcher(vec2 p)
     float r = length(p), an = atan(p.y, p.x);
     float rays = 0.5 + 0.5 * cos(an * 24.0 + sin(r * 10.0 - uTime) * 2.0);
     vec4 acc = vec4(pal(r * 0.8 + uHue + 0.5) * rays * 0.8, smoothstep(0.9, 0.2, r) * 0.65 * rays);  // see-through: the dome shows behind
-    vec2 look = vec2(sin(uTime * 0.7), cos(uTime * 0.53)) * 0.6 * (1.0 - uBeat);
+    vec2 look = vec2(sin(uTime * 0.7), cos(uTime * 0.53)) * (0.54 + 0.06 * sin(uTime * 0.9));
     for (int ring = 0; ring < 3; ring++) {
         int n = ring == 0 ? 1 : (ring == 1 ? 6 : 12);
         float R = ring == 0 ? 0.0 : (ring == 1 ? 0.3 : 0.58);
@@ -490,7 +501,7 @@ vec4 watcher(vec2 p)
             vec2 q = p - c;
             if (length(q) > s * 1.2) continue;
             float seed = float(ring * 12 + i) * 0.137;
-            float blink = step(0.985, sin(uTime * 1.3 + seed * 40.0));
+            float blink = smoothstep(0.94, 1.0, sin(uTime * 1.3 + seed * 40.0));
             float open = clamp(uEntityAmt * 1.3 - float(ring) * 0.15, 0.0, 1.0) * (1.0 - blink);
             vec4 e = eye(q, s, open, look, seed);
             acc = mix(acc, vec4(e.rgb, 1.0), e.a);
@@ -529,10 +540,10 @@ vec4 jesters(vec2 p)
         float fi = float(i);
         float ph = uTime * 0.25 + fi * 2.0 * PI / 5.0;
         vec2 c = vec2(0.5 * cos(ph), 0.28 * sin(ph) - 0.05);
-        c.y += abs(sin(uTime * 2.2 + fi)) * 0.12 + uBeat * 0.08;  // bouncing
+        c.y += (0.5 - 0.5 * cos(uTime * 2.2 + fi)) * 0.12;  // eased bouncing
         float s = 0.17 * (1.0 + 0.15 * sin(uTime * 3.0 + fi));
         vec2 q = p - c;
-        q.x *= 1.0 + 0.3 * sin(uTime * 1.7 + fi) * (0.4 + uMid * 0.6);  // never quite the same shape twice
+        q.x *= 1.0 + 0.3 * sin(uTime * 1.7 + fi) * (0.7 + 0.3 * sin(uTime * 0.4 + fi));  // never quite the same shape twice
         q = rot(0.3 * sin(uTime * 1.5 + fi)) * q;
         if (length(q) > s * 1.3) continue;
         vec4 j = jester(q, s, fi * 0.21);
@@ -548,6 +559,9 @@ vec4 mantis(vec2 p)
 {
     p = p * 1.15 + vec2(0.0, 0.05);
     vec2 m = vec2(abs(p.x), p.y);
+    // the limbs move: the forearms slowly unfold and strike (a grasping pincer), the legs paddle
+    float grab = 0.5 + 0.5 * sin(uTime * 1.6 + 0.5 * sin(uTime * 0.7));  // uneven open/close, like it's reaching
+    float gait = uTime * 2.3;
     // wings
     vec2 w = m - vec2(0.0, -0.1);
     float wr = length(w), wa = atan(w.y, w.x);
@@ -555,19 +569,22 @@ vec4 mantis(vec2 p)
     float wing = smoothstep(0.8, 0.45, wr) * smoothstep(-1.2, -0.3, wa) * smoothstep(1.3, 0.8, wa);
     vec4 acc = vec4(pal(wr + uHue + 0.6) * (0.2 + 0.9 * fan) * (0.6 + uHigh * 0.5), wing * 0.8);
     // legs (thin) and the body
-    float legs = min(limb(m, vec2(0.03, -0.1), vec2(0.27, -0.02), vec2(0.36, -0.26), 0.008),
-                     limb(m, vec2(0.04, -0.17), vec2(0.28, -0.34), vec2(0.32, -0.62), 0.008));
+    float legs = min(limb(m, vec2(0.03, -0.1), vec2(0.27, -0.02), vec2(0.36, -0.26) + 0.03 * vec2(sin(gait), cos(gait)), 0.008),
+                     limb(m, vec2(0.04, -0.17), vec2(0.28, -0.34), vec2(0.32, -0.62) + 0.035 * vec2(sin(gait + 1.7), cos(gait + 2.1)), 0.008));
     vec2 ab = (m - vec2(0.0, -0.4)) / vec2(0.15, 0.33);
     float abdomen = (length(ab) - 1.0) * 0.15;
     float thorax = sdSeg(m, vec2(0.0, -0.08), vec2(0.0, 0.17)) - 0.035;
     vec2 hp = m - vec2(0.0, 0.17);  // the head: a triangle, chin down at y 0.17, eyes at its top corners
     float head = max(max(dot(hp, normalize(vec2(1.0, -0.6))) - 0.02, hp.y - 0.15), -hp.y - 0.01);
-    // arms folded in prayer: thigh up and out, shin folding back down and in
-    float arm = limb(m, vec2(0.02, 0.06), vec2(0.15, 0.2), vec2(0.06, -0.01), 0.022);
+    // the raptorial forelegs: femur up and out, the spined tibia folds in prayer and swings out to strike
+    vec2 femurA = vec2(0.02, 0.06), femurB = vec2(0.15, 0.2);
+    vec2 tibiaTip = femurB + mix(vec2(-0.09, -0.21), vec2(0.11, -0.19), grab);  // folded-in <-> reached-out
+    float arm = limb(m, femurA, femurB, tibiaTip, 0.02);
+    vec2 fdir = normalize(tibiaTip - femurB), fnrm = vec2(fdir.y, -fdir.x);  // the grasping spines line the tibia's inner edge
     float spikes = 1.0;
     for (int i = 0; i < 4; i++) {
-        vec2 a = mix(vec2(0.15, 0.2), vec2(0.06, -0.01), 0.2 + 0.2 * float(i));
-        spikes = min(spikes, sdSeg(m, a, a + vec2(0.035, -0.01)) - 0.004);
+        vec2 a = mix(femurB, tibiaTip, 0.15 + 0.22 * float(i));
+        spikes = min(spikes, sdSeg(m, a, a + fnrm * (0.03 + 0.02 * grab)) - 0.004);  // spines splay wider as it opens
     }
     float antenna = sdSeg(m, vec2(0.04, 0.31), vec2(0.2 + 0.03 * sin(uTime * 2.0), 0.62)) - 0.004;
     float bodyD = min(min(min(abdomen, thorax), min(head, arm)), min(min(antenna, spikes), legs));
@@ -578,12 +595,12 @@ vec4 mantis(vec2 p)
     acc = mix(acc, vec4(bodyCol, 1.0), smoothstep(0.004, -0.004, bodyD));
     acc.rgb += pal(uHue + 0.3) * edge * 1.2;
     acc.a = max(acc.a, edge);
-    // eyes: big, faceted, bulging from the head's top corners, glowing on the beat
+    // eyes: big, faceted, bulging from the head's top corners, gently pulsing
     vec2 ep = (m - vec2(0.12, 0.31)) / vec2(0.06, 0.05);
     if (length(ep) < 1.0) {
         vec2 hx = ep * 5.0;
         float facet = smoothstep(0.3, 0.5, length(fract(hx + vec2(0.5 * mod(floor(hx.y), 2.0), 0.0)) - 0.5));
-        vec3 ec = mix(pal(uHue + 0.15) * 1.4, vec3(0.03), facet * 0.6) * (0.7 + uBeat);
+        vec3 ec = mix(pal(uHue + 0.15) * 1.4, vec3(0.03), facet * 0.6) * (0.85 + 0.15 * sin(uTime * 1.2));
         ec += 0.5 * smoothstep(0.35, 0.0, length(ep - vec2(-0.3, 0.35)));
         acc = vec4(ec, 1.0);
     }
@@ -611,6 +628,12 @@ float wN3(vec3 p)
 float wSdBox(vec3 p, vec3 b) { vec3 q = abs(p) - b; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0); }
 float wSdCap(vec3 p, vec3 a, vec3 b, float r) { vec3 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h) - r; }
 
+// the forest's rolling hills, and the winding lane the camera follows between the trees
+float wHill(vec2 xz) { return -3.0 + 7.0 * (fbm(xz * 0.03) - 0.48) + 1.2 * sin(xz.x * 0.09 + 1.0) * sin(xz.y * 0.07); }
+float wLane(float z) { return 4.0 * sin(z * 0.045) + 2.0 * sin(z * 0.11); }
+// the corridor's centre line
+vec2 wTube(float z) { return vec2(1.6 * sin(z * 0.18) + 2.0 * sin(z * 0.06), 1.3 * cos(z * 0.15)); }
+
 // one signed-distance map for all three worlds; mid comes back tagging what was hit
 float wMap(vec3 q, int dim, out float mid)
 {
@@ -620,29 +643,39 @@ float wMap(vec3 q, int dim, out float mid)
         vec2 cell = floor(q.xz / 4.0);
         vec3 r = vec3(mod(q.x + 2.0, 4.0) - 2.0, q.y, mod(q.z + 2.0, 4.0) - 2.0);
         float ht = 3.0 + 7.0 * wH3(vec3(cell, 0.5));
-        ht += 1.6 * uBass * sin(uTime * 1.5 + wH3(vec3(cell, 9.0)) * 30.0);   // heights breathing with the bass
+        ht += 0.5 * uBass * sin(uTime * 1.5 + wH3(vec3(cell, 9.0)) * 30.0);   // heights breathing with the bass
         float rad = 0.45 + 0.35 * wH3(vec3(cell, 5.5));
         float pil = wSdBox(vec3(r.x, r.y - (ht - 2.0) * 0.5, r.z), vec3(rad, ht * 0.5, rad)) - 0.06;
         if (pil < ground) mid = 1.0;
         return min(ground, pil);
     }
-    if (dim == 2) {                                                   // FOREST
-        float ground = q.y + 3.0 + 0.3 * fbm(q.xz * 0.3);
-        vec2 cell = floor(q.xz / 5.0);
-        vec3 r = vec3(mod(q.x + 2.5, 5.0) - 2.5, q.y, mod(q.z + 2.5, 5.0) - 2.5);
-        float sway = 0.25 * uMid * sin(uTime * 0.9 + wH3(vec3(cell, 2.0)) * 10.0);
-        float th = 6.0 + 4.0 * wH3(vec3(cell, 2.0));
-        vec3 top = vec3(sway * 4.0 + 0.4 * (wH3(vec3(cell, 8.0)) - 0.5), th - 3.0, 0.4 * (wH3(vec3(cell, 4.0)) - 0.5));
-        float trunk = wSdCap(r, vec3(0.0, -3.0, 0.0), top, 0.22 + 0.06 * wH3(vec3(cell, 1.0)));
-        float cr = 1.6 + 1.3 * wH3(vec3(cell, 6.0));
-        float canopy = length(r - top) - cr - 0.25 * wN3((r - top) * 0.8 + uTime * 0.15);  // gently lumpy, not noisy
-        float tree = smin(trunk, canopy, 0.5);
-        if (tree < ground) mid = (canopy < trunk) ? 2.0 : 1.0;        // 2 canopy, 1 bark
+    if (dim == 2) {                                                   // FOREST — jagged fir / conifer trees on rolling hills
+        float ground = (q.y - wHill(q.xz)) * 0.7;                     // (0.7: the slopes make the height a loose distance)
+        vec2 cell = floor((q.xz + 2.5) / 5.0), cc = cell * 5.0;       // the tree's cell and its centre (one tree per cell)
+        if (abs(cc.x - wLane(cc.y)) < 4.0) { mid = 0.0; return ground; }  // the lane the camera flies down stays clear
+        vec3 r = vec3(q.x - cc.x, q.y, q.z - cc.y);
+        float sway = 0.1 * uMid * sin(uTime * 0.9 + wH3(vec3(cell, 2.0)) * 10.0);
+        float baseY = wHill(cc) - 0.4;                                // rooted in the hillside
+        float apexY = baseY + 6.5 + 4.0 * wH3(vec3(cell, 2.0));       // tall, pointed top
+        float hN = clamp((r.y - baseY) / max(apexY - baseY, 0.1), 0.0, 1.0);  // 0 at the foot, 1 at the tip
+        vec2 lean = vec2(sway * 4.0 + 0.4 * (wH3(vec3(cell, 8.0)) - 0.5), 0.4 * (wH3(vec3(cell, 4.0)) - 0.5));
+        vec3 top = vec3(lean.x, apexY, lean.y);
+        vec2 rad2 = r.xz - lean * hN;                                 // the trunk leans with the sway as it rises
+        float ang = atan(rad2.y, rad2.x);
+        float Rb = 1.3 + 1.0 * wH3(vec3(cell, 6.0));                  // how wide the skirt spreads at the foot
+        float nTiers = 5.0 + floor(3.0 * wH3(vec3(cell, 7.0)));       // 5-8 drooping branch layers
+        float tier = 1.0 - fract(hN * nTiers);                        // each layer: widest at its base, tapering to nothing (the stepped fir skirts)
+        float jag = 0.82 + 0.18 * sin(ang * (11.0 + 6.0 * wH3(vec3(cell, 3.0))) + hN * 22.0);  // serrated, furry edge of needles around the trunk
+        float R = Rb * (1.0 - hN) * (0.3 + 0.7 * tier) * jag;        // cone taper × tier skirts × jagged needles
+        float canopy = max(length(rad2) - R, max(baseY - r.y, r.y - apexY)) * 0.8;
+        float trunk = wSdCap(r, vec3(0.0, baseY, 0.0), top, 0.12 + 0.05 * wH3(vec3(cell, 1.0)));
+        float tree = min(trunk, canopy);                              // hard union: the silhouette stays jagged, not rounded off
+        tree = min(tree, 2.5);                                        // never step past a neighbouring cell's tree
+        if (tree < ground) mid = (canopy < trunk) ? 2.0 : 1.0;        // 2 needles, 1 bark
         return min(ground, tree);
     }
     // CORRIDOR (dim == 3): we march the air inside the tube, the wall is the surface
-    vec2 ctr = vec2(1.6 * sin(q.z * 0.18) + 2.0 * sin(q.z * 0.06), 1.3 * cos(q.z * 0.15));
-    vec2 d2 = q.xy - ctr;
+    vec2 d2 = q.xy - wTube(q.z);
     float ang = atan(d2.y, d2.x);
     float reff = 2.7 + 0.45 * sin(q.z * 0.5)
                - 0.3 * fbm(vec2(ang * 2.0, q.z * 0.2));               // smooth bulges, ln draws them clean
@@ -657,15 +690,285 @@ vec3 wNormal(vec3 q, int dim)
                    + e.yxy * wMap(q + e.yxy, dim, m) + e.xxx * wMap(q + e.xxx, dim, m));
 }
 
-vec3 world(vec2 p, int dim)
+// dimension 4: a fractal dive, ported from fractalviz (Mandelbrot/Julia/Burning Ship/Tricorn/
+// Multibrot). Shown twice: the top half, and below it the same view mirrored and upside down, so
+// the two meet at a seam across the middle like a reflection. It zooms in at a fixed rate; the CPU
+// (FracDive.hpp) steers toward the most detailed spot. Glow colouring: the boundary lights up,
+// purple on bass, orange on highs.
+// Returns .rgb colour + .a coverage, so it keys over the base scene like the other worlds.
+vec4 fractalWorld(vec2 p)
 {
-    float spd = 2.2 + 2.5 * uLevel;
-    float z0 = uTime * spd;
-    vec3 ro, rd = normalize(vec3(p, 1.25));
-    rd.xy = rot(uSpin * 0.3 + 0.12 * sin(uTime * 0.2)) * rd.xy;       // banking as you fly
-    if (dim == 1)      ro = vec3(1.2 * sin(uTime * 0.3), 1.0, z0);
-    else if (dim == 2) ro = vec3(1.5 * sin(uTime * 0.25), 1.6, z0);
-    else { vec2 c = vec2(1.6 * sin(z0 * 0.18) + 2.0 * sin(z0 * 0.06), 1.3 * cos(z0 * 0.15)); ro = vec3(c, z0); }
+    int which = int(uFractal + 0.5);
+    // Fit the complete vertical view into each half instead of cropping it
+    // to a quarter-height strip. Uniform scaling preserves the fractal's shape.
+    vec2 q = uFracTwin < 0.5 ? p * 2.0
+        : 4.0 * (p.y >= 0.0 ? vec2(p.x, p.y - 0.25) : vec2(-p.x, -p.y - 0.25));
+    vec2 cc = uFracCtr + q * uFracScale;
+
+    vec2 c = which == 1 ? uJuliaC : cc;
+    vec2 z = which == 1 ? cc : vec2(0.0);
+    float sm = 0.0, m2 = 0.0; bool esc = false;
+    for (int k = 0; k < 460; k++) {
+        if (k >= uFracIt) break;
+        if (which == 2) z = abs(z);                                   // burning ship
+        if (which == 3) z.y = -z.y;                                   // tricorn: conjugate before squaring
+        vec2 zn = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y);       // z^2
+        if (which == 4) zn = vec2(zn.x * z.x - zn.y * z.y, zn.x * z.y + zn.y * z.x);  // z^3
+        z = zn + c;
+        m2 = dot(z, z);
+        if (m2 > 256.0) { sm = float(k) - log2(log2(m2)) + 4.0; esc = true; break; }
+    }
+    float seam = exp(-abs(p.y) * uRes.y * 0.35) * 0.6 * uFracTwin;                // a thin glowing line where the twins meet
+    if (!esc) return vec4(pal(uHue) * seam, clamp(seam, 0.0, 1.0) * uFracFade);  // inside the set: transparent, the base scene shows
+    float t = clamp((sm - uFracBase) / 160.0, 0.0, 1.0);             // counted from the shallowest escape on screen, so deep views still have contrast
+    float edge = smoothstep(0.015, 0.22, t);                         // the boundary filigree lights up, the far escapes stay dark
+    vec3 glow = mix(vec3(0.4, 0.12, 0.7), vec3(1.7, 0.75, 0.2), clamp(0.5 + 0.9 * (uHigh - uBass), 0.0, 1.0));  // purple on bass, orange on highs
+    float band = 0.6 + 0.4 * sin(sm * 0.5 - uTime);                  // moving contour bands
+    vec3 col = mix(glow, pal(uHue + t * 0.6), 0.3) * edge * band * 1.6 + pal(uHue) * seam;
+    return vec4(col, clamp(edge * 1.2 + seam, 0.0, 1.0) * uFracFade);
+}
+
+// dimension 5: 3D fractals, raymarched. 0 = a Mandelbulb you orbit, its power breathing with the
+// bass (it sprouts more lobes on the low end); 1 = an endless Menger sponge you fly through, the
+// holes inside holes inside holes. Coloured by orbit traps (how close each point's orbit came to
+// the origin), with step-count glow and fog.
+float bulbDE(vec3 p, out float trap)
+{
+    float power = 8.0 + 1.5 * sin(uF3Time * 0.11) + 1.2 * (uBass * uF3React);
+    vec3 z = p; float dr = 1.0, r = 0.0; trap = 1e9;
+    for (int i = 0; i < 7; i++) {
+        r = length(z);
+        if (r > 2.0) break;
+        trap = min(trap, r);
+        float th = acos(clamp(z.z / r, -1.0, 1.0)) * power, ph = atan(z.y, z.x) * power;
+        dr = pow(r, power - 1.0) * power * dr + 1.0;
+        z = pow(r, power) * vec3(sin(th) * cos(ph), sin(th) * sin(ph), cos(th)) + p;
+    }
+    return 0.5 * log(max(r, 1e-6)) * r / dr;
+}
+
+float mengerDE(vec3 p, out float trap)
+{
+    p.z += uF3Time * 0.35;                                              // the sponge streams past (the camera stays put)
+    p = mod(p + 1.0, 2.0) - 1.0;                                      // tile it forever
+    float d = max(max(abs(p.x), abs(p.y)), abs(p.z)) - 1.0, s = 1.0;
+    trap = 1e9;
+    for (int i = 0; i < 5; i++) {
+        vec3 a = mod(p * s, 2.0) - 1.0;
+        s *= 3.0;
+        vec3 r = abs(1.0 - 3.0 * abs(a));
+        float c = (min(max(r.x, r.y), min(max(r.y, r.z), max(r.z, r.x))) - 1.0) / s;
+        d = max(d, c);
+        trap = min(trap, length(a));
+    }
+    return d;
+}
+
+// the Mandelbox: fold the space into a box, invert it through a sphere, scale, repeat. Shrunk to fit
+// beside the bulb; its scale leans with the bass, so the cubes-of-cubes swell and crack
+float boxDE(vec3 p, out float trap)
+{
+    const float k = 5.5;
+    vec3 z = p * k, c = z;
+    float dr = 1.0, sc = 2.0 + 0.12 * sin(uF3Time * 0.09) + 0.1 * (uBass * uF3React);
+    trap = 1e9;
+    for (int i = 0; i < 10; i++) {
+        z = clamp(z, -1.0, 1.0) * 2.0 - z;                            // box fold
+        float r2 = dot(z, z);
+        if (r2 < 0.25) { z *= 4.0; dr *= 4.0; }                        // sphere fold
+        else if (r2 < 1.0) { z /= r2; dr /= r2; }
+        z = z * sc + c;
+        dr = dr * abs(sc) + 1.0;
+        trap = min(trap, sqrt(r2));
+    }
+    return length(z) / abs(dr) / k;
+}
+
+// a Sierpinski pyramid: fold across the tetrahedron's planes, scale toward a corner, repeat.
+// A small twist per fold (the mids) turns it into a crystal that keeps re-growing
+float sierDE(vec3 p, out float trap)
+{
+    const float k = 1.3;
+    vec3 z = p * k;
+    mat2 tw = rot(0.04 * sin(uF3Time * 0.17) + 0.03 * (uMid * uF3React));
+    trap = 1e9;
+    for (int i = 0; i < 8; i++) {
+        if (z.x + z.y < 0.0) z.xy = -z.yx;
+        if (z.x + z.z < 0.0) z.xz = -z.zx;
+        if (z.y + z.z < 0.0) z.zy = -z.yz;
+        z.xy = tw * z.xy;
+        z = z * 2.0 - 1.0;
+        trap = min(trap, length(z));
+    }
+    return (length(z) * pow(2.0, -8.0) - 0.004) / k;              // a hair thicker so it reads as solid, not dust
+}
+
+// a quaternion Julia: the 2D Julia's rule in four dimensions, sliced to 3D. Its c drifts, so the
+// shape is never the same twice
+float qjDE(vec3 p, out float trap)
+{
+    vec4 c = 0.45 * cos(vec4(0.5, 3.9, 1.4, 1.1) + uF3Time * 0.12 * vec4(1.2, 1.7, 1.3, 2.5)) - vec4(0.3, 0.0, 0.0, 0.0);
+    vec4 z = vec4(p, 0.0);
+    float md2 = 1.0, mz2 = dot(z, z);
+    trap = 1e9;
+    for (int i = 0; i < 11; i++) {
+        md2 *= 4.0 * mz2;
+        z = vec4(z.x * z.x - dot(z.yzw, z.yzw), 2.0 * z.x * z.yzw) + c;  // z^2 + c, quaternion-style
+        mz2 = dot(z, z);
+        trap = min(trap, mz2);
+        if (mz2 > 4.0) break;
+    }
+    return 0.25 * sqrt(mz2 / md2) * log(max(mz2, 1e-6));
+}
+
+// an Apollonian gasket: spheres packed between spheres, forever, a whole space of them streaming past
+float apoDE(vec3 p, out float trap)
+{
+    p = p * 0.45 + vec3(0.8, 0.4, 1.03 + uF3Time * 0.12);               // bigger spheres streaming past; the camera sits in open space
+    float scale = 1.0, s = 1.15 + 0.08 * sin(uF3Time * 0.1) + 0.05 * (uBass * uF3React);
+    trap = 1e9;
+    for (int i = 0; i < 8; i++) {
+        p = -1.0 + 2.0 * fract(0.5 * p + 0.5);
+        float r2 = dot(p, p);
+        trap = min(trap, r2);
+        float k = s / r2;
+        p *= k; scale *= k;
+    }
+    return 0.25 * abs(p.y) / scale / 0.45;
+}
+
+float frac3One(vec3 p, int which, out float trap)
+{
+    if (which == 1) return mengerDE(p, trap);
+    if (which == 2) return boxDE(p, trap);
+    if (which == 3) return sierDE(p, trap);
+    if (which == 4) return qjDE(p, trap);
+    if (which == 5) return apoDE(p, trap);
+    return bulbDE(p, trap);
+}
+bool frac3Inside(int which) { return which == 1 || which == 5; }  // fly-through spaces vs objects you orbit
+
+// a real morph, not a crossfade: the two shapes' distance fields are blended, so one solid melts
+// into the other (the sponge's walls swell and round off into the bulb's lobes, or back)
+float frac3DE(vec3 p, out float trap)
+{
+    int a = int(uFrac3A + 0.5), b = int(uFrac3B + 0.5);
+    if (uFrac3M >= 0.999 || a == b) return frac3One(p, b, trap);
+    if (uFrac3M <= 0.001) return frac3One(p, a, trap);               // settled at the start: one shape, one eval
+    float ta, tb, da = frac3One(p, a, ta), db = frac3One(p, b, tb);
+    trap = mix(ta, tb, uFrac3M);
+    return mix(da, db, uFrac3M);
+}
+
+// where each fractal's camera sits: the bulb is orbited, the sponge slides past a camera in its
+// central tunnel. Both sit ~2.3 from the middle looking in, so blending them is a smooth move.
+void frac3Cam(int which, out vec3 ro, out vec3 ta)
+{
+    if (!frac3Inside(which)) {                                       // orbit the object, swinging in close and back out
+        float a = uF3Time * 0.12 + uSpin * 0.5, d = 2.3 + 0.5 * sin(uF3Time * 0.07);
+        ro = vec3(d * cos(a), 0.6 * sin(uF3Time * 0.05), d * sin(a));
+        ta = vec3(0.0);
+    } else {                                                          // down a tunnel (the space itself streams past)
+        ro = vec3(0.0, 0.0, -2.3);
+        ta = ro + vec3(0.3 * sin(uF3Time * 0.13), 0.3 * cos(uF3Time * 0.1), 1.0);
+    }
+}
+
+// the 3D fractal cut down to a slab |z| < h around the z=0 sheet: as h shrinks it becomes a thin
+// slice through the shape (a slice of a 3D fractal already looks like a 2D one)
+float frac3Flat(vec3 p, float h, out float trap) { return max(frac3DE(p, trap), abs(p.z) - h); }
+
+// the 3D fractal. `fl` is how far it has morphed into the 2D one (0 = all 3D, 1 = all 2D): the
+// shape is sliced thinner and thinner down to a sheet at z=0, the 2D fractal appears on that sheet, and the camera
+// swings round to face it head-on. Seen from there, the sheet fills the screen exactly as the 2D
+// dimension draws it, so the hand-over at the end is seamless. Run backwards, 2D puffs up into 3D.
+vec4 fractal3D(vec2 p, float fl)
+{
+    int a = int(uFrac3A + 0.5), b = int(uFrac3B + 0.5);
+    vec3 ro, ta, ro2, ta2;
+    frac3Cam(b, ro, ta);
+    if (uFrac3M < 0.999 && a != b) { frac3Cam(a, ro2, ta2); ro = mix(ro2, ro, uFrac3M); ta = mix(ta2, ta, uFrac3M); }
+    float ec = smoothstep(0.0, 0.85, fl);                             // the camera arrives a little before the end
+    if (ec > 0.0 && !(frac3Inside(a) && frac3Inside(b))) {           // orbiting: arc over the top at a steady distance, never through the shape
+        float L = mix(length(ro), 2.3, ec);
+        ro = mix(ro, vec3(0.0, 0.0, -2.3), ec);
+        ro.y += 2.0 * sin(3.14159 * ec);
+        ro = normalize(ro) * L;
+    } else ro = mix(ro, vec3(0.0, 0.0, -2.3), ec);                    // the 2D view: straight down at the sheet
+    ta = mix(ta, vec3(0.0), ec);
+    vec3 fw = normalize(ta - ro), rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw)), up = cross(fw, rt);
+    vec2 pr = rot(uSpin * 0.2 * (1.0 - ec)) * p;
+    vec3 rd = normalize(pr.x * rt + pr.y * up + 1.4 * fw);
+    float sq = mix(6.0, 0.004, pow(smoothstep(0.0, 0.8, fl), 0.5));   // the slab: everything, down to a thin slice
+
+    float t = 0.0, trap = 0.0; int steps = 0; bool hit = false;
+    float tmax = mix(frac3Inside(a) ? 14.0 : 6.0, frac3Inside(b) ? 14.0 : 6.0, uFrac3M);
+    for (int i = 0; i < 90; i++) {
+        float d = frac3Flat(ro + rd * t, sq, trap);
+        if (d < 0.0006 * (1.0 + t * 1.5)) { hit = true; break; }
+        t += d * 0.9;
+        steps = i;
+        if (t > tmax) break;
+    }
+    float glow = float(steps) / 90.0;                                 // rays that brushed the surface glow
+    vec3 halo = pal(uHue + 0.5) * glow * glow * (0.8 + 0.8 * (uBeat * uF3React)) * (1.0 - fl);
+    vec4 obj = vec4(halo, clamp(glow * glow * 1.5, 0.0, 1.0) * (1.0 - fl));
+    if (hit) {
+        vec3 q = ro + rd * t;
+        float tr;
+        float h = 0.0008 * (1.0 + t);                                 // tetrahedron normal: 4 evals instead of 6
+        const vec2 k = vec2(1.0, -1.0);
+        vec3 n = normalize(k.xyy * frac3Flat(q + k.xyy * h, sq, tr) +
+                           k.yyx * frac3Flat(q + k.yyx * h, sq, tr) +
+                           k.yxy * frac3Flat(q + k.yxy * h, sq, tr) +
+                           k.xxx * frac3Flat(q + k.xxx * h, sq, tr));
+        float ao = 1.0 - glow;                                        // many steps = a crevice: darker
+        vec3 L = normalize(vec3(0.5, 0.8, -0.4));
+        float dif = max(dot(n, L), 0.0), rim = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
+        vec3 base = pal(uHue + trap * 0.9 + 0.1 * (uMid * uF3React));
+        vec3 col = base * (0.15 + 0.85 * dif) * ao + pal(uHue + 0.35) * rim * (0.6 + uHigh) + halo;
+        col *= 1.0 - smoothstep(tmax * 0.4, tmax, t);                 // fog: far parts sink into the dark
+        obj = vec4(col * 1.3, 1.0);
+    }
+    if (fl <= 0.001) return obj;
+
+    // the sheet carrying the 2D fractal, seen in perspective until the camera faces it square
+    vec4 sheet = vec4(0.0);
+    if (rd.z > 1e-3) {
+        float tp = -ro.z / rd.z;
+        if (tp > 0.0) {
+            sheet = fractalWorld((ro.xy + rd.xy * tp) * 1.4 / 2.3);
+            sheet.a *= smoothstep(0.15, 0.75, fl);                    // the 2D one shows through as the shape flattens
+        }
+    }
+    obj.a *= 1.0 - smoothstep(0.55, 1.0, fl);                         // the flattened 3D shape gives way to it
+    float al = obj.a + sheet.a * (1.0 - obj.a);                       // the shape over the sheet
+    vec3 rgb = (obj.rgb * obj.a + sheet.rgb * sheet.a * (1.0 - obj.a)) / max(al, 1e-4);
+    return vec4(rgb, al);
+}
+
+// returns the ink colour in .rgb and the line coverage in .a (paper = 0 = transparent), so the caller
+// can key the white paper out and draw only the lines over the base scene
+)"
+#include "Ineffable.glsl"
+R"(
+vec4 world(vec2 p, int dim)
+{
+    if (dim >= 6) return ineffable(p, dim);
+    if (dim == 5) return fractal3D(p, 0.0);
+    if (dim == 4) return fractalWorld(p);
+    float z0 = uWorldZ;                                               // flown smoothly (the CPU adds a little each frame)
+    vec3 ro, ta;
+    if (dim == 1) { ro = vec3(1.2 * sin(uTime * 0.3), 1.0, z0); ta = ro + vec3(0.0, 0.0, 4.0); }
+    else if (dim == 2) {                                              // down the lane, riding the hills a little above the ground
+        float za = z0 + 5.0;
+        ro = vec3(wLane(z0), 0.0, z0);
+        ro.y = max(wHill(ro.xz), wHill(vec2(wLane(za), za))) + 2.2;   // never into the slope ahead
+        ta = vec3(wLane(za), wHill(vec2(wLane(za), za)) + 1.6, za);
+    } else { ro = vec3(wTube(z0), z0); ta = vec3(wTube(z0 + 4.0), z0 + 4.0); }  // the corridor: look along its bend
+    vec3 fw = normalize(ta - ro), rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw)), up = cross(fw, rt);
+    vec2 pb = rot(0.12 * sin(uTime * 0.2) + (dim == 3 ? 0.0 : uSpin * 0.3)) * p;  // gentle banking (the corridor stays level: no spinning in a tube)
+    vec3 rd = normalize(pb.x * rt + pb.y * up + 1.25 * fw);
 
     float t = 0.0, mid = 0.0; bool hit = false;
     for (int i = 0; i < 96; i++) {
@@ -675,13 +978,14 @@ vec3 world(vec2 p, int dim)
         if (t > 60.0) break;
     }
     // the ln look: a 3D scene drawn in ink on paper, hidden lines removed by the march itself.
-    // paper tints faintly with the mood; the ink carries this moment's hue.
-    vec3 paper = mix(vec3(0.95, 0.94, 0.9), pal(uHue + 0.5) * 0.25 + 0.68, 0.1 * uMood);  // near-white, only a whisper of hue
-    vec3 ink   = mix(vec3(0.02, 0.02, 0.05), pal(uHue) * 0.35, 0.4);                       // dark ink, lightly tinted, for strong contrast
-    if (!hit) return paper;
+    // the ink is a full rainbow now: its bands run through the 3D space and depth, drifting with the music's hue.
+    if (!hit) return vec4(vec3(0.0), 0.0);                                                   // no lines here: fully transparent, the base scene shows
 
     vec3 q = ro + rd * t;
     vec3 n = wNormal(q, dim);
+    float rb = q.x * 0.18 + q.y * 0.14 + q.z * 0.11 + uHue + uTime * 0.05;                   // the rainbow runs along the form and slowly drifts
+    vec3 ink = 0.5 + 0.5 * cos(6.2831 * (rb + vec3(0.0, 0.33, 0.67)));                       // candy spectrum, red/green/blue bands offset
+    ink *= 0.85 + 0.35 * uLevel;                                                             // a touch brighter when the music swells
     float near = 1.0 - smoothstep(0.0, 14.0, t);                      // how close: near lines bold, far lines faint (aerial perspective = depth)
     float fade = 1.0 - smoothstep(16.0, 52.0, t);                     // far lines run dry, like a plotter pen
 
@@ -690,6 +994,12 @@ vec3 world(vec2 p, int dim)
     float depthE = smoothstep(0.03, 0.1, fwidth(t) / max(t, 1.0));    // where depth jumps, a shape hides the one behind
     float creaseE = smoothstep(1.4, 2.8, length(fwidth(n)) * 30.0);   // only real corners and ridges, not every wrinkle
     float line = clamp(max(smoothstep(0.45, 0.8, silh), max(depthE, creaseE * 0.8)), 0.0, 1.0);
+    if (dim == 3) {                                                   // the corridor: steady rings and lengthwise lines drawn ON the wall,
+        vec2 d2 = q.xy - wTube(q.z);                                  // no screen-space edges (they flickered on the grazing walls)
+        vec2 g = vec2(q.z * 0.5, atan(d2.y, d2.x) * 12.0 / 6.2831);
+        vec2 gl = abs(fract(g) - 0.5) / max(fwidth(g) * 1.5, vec2(1e-4));
+        line = (1.0 - clamp(min(gl.x, gl.y), 0.0, 1.0)) * (1.0 - smoothstep(0.0, 0.3, length(fwidth(g))));  // fade where lines would crowd into shimmer
+    }
 
     // a receding floor/ground grid: the strongest cue that you're standing inside a 3D space, lines converging to the horizon
     if (dim != 3 && mid < 0.5) {
@@ -697,14 +1007,14 @@ vec3 world(vec2 p, int dim)
         line = max(line, 1.0 - clamp(min(gr.x, gr.y), 0.0, 1.0));
     }
 
-    // hatching that follows the form, laid into the shaded side (the music combs it finer and tilts it)
+    // hatching that follows the form, laid into the shaded side (the mids thicken it)
     float lit = 0.5 + 0.5 * dot(n, normalize(vec3(0.4, 0.8, -0.3)));
-    float hatch = smoothstep(0.78, 0.97, sin((q.x + q.y * 1.3 + q.z) * (5.0 + 4.0 * uMid) + uTime * 0.5));
+    float hatch = smoothstep(0.78 - 0.08 * uMid, 0.97, sin((q.x + q.y * 1.3 + q.z) * 5.0 + uTime * 0.5));  // fixed spacing (a music-bent spacing times the distance flown flickered); the mids thicken it
     hatch *= (1.0 - smoothstep(0.35, 0.7, lit)) * 0.4;
 
-    float press = (1.0 + 0.7 * uBeat + 0.45 * uHigh) * (0.6 + 0.9 * near);  // near lines pressed harder/bolder, far lines light: depth
+    float press = (1.0 + 0.3 * uBeat + 0.2 * uHigh) * (0.6 + 0.9 * near);  // near lines pressed harder/bolder, far lines light: depth
     float amt = clamp((line * press + hatch) * fade, 0.0, 1.0);
-    return mix(paper, ink, amt);
+    return vec4(ink, amt);  // ink colour + how strongly a line is drawn here (the alpha the caller keys with)
 }
 
 void main()
@@ -715,12 +1025,53 @@ void main()
     vec3 col = vec3(0.0);
     float w0 = clamp(1.0 - abs(uStage - 0.0), 0.0, 1.0), w1 = clamp(1.0 - abs(uStage - 1.0), 0.0, 1.0);
     float w2 = clamp(1.0 - abs(uStage - 2.0), 0.0, 1.0), w3 = clamp(1.0 - abs(uStage - 3.0), 0.0, 1.0);
+    if (uBlendAll) {
+        // Every stage retains a contribution; moving, broad fields let their
+        // structures emerge in different regions without cuts or camera moves.
+        vec4 w = vec4(0.10) + pow(0.5 + 0.5 * sin(vec4(0, 1.57, 3.14, 4.71)
+            + uSacredTime * 0.09 + p.x * 2.4 + p.y * 1.7), vec4(4.0));
+        w += vec4(w0,w1,w2,w3) * 0.35;
+        w /= dot(w,vec4(1));
+        w0=w.x; w1=w.y; w2=w.z; w3=w.w;
+    }
     if (w0 > 0.0) col += w0 * comeup(p);
     if (w1 > 0.0) col += w1 * chrysanthemum(p);
     if (w2 > 0.0) col += w2 * tunnel(p);
     if (w3 > 0.0) col += w3 * dome(p);
     // an extra dimension flown into, crossfading over whatever stage we're on
-    if (uDimAmt > 0.001) col = mix(col, world(p, int(uDim + 0.5)), uDimAmt);
+    if (uBlendAll) {
+        vec3 worlds=vec3(0);
+        float coverage=0.0, total=0.0;
+        for (int d=1; d<=9; ++d) {
+            float phase=float(d)*2.39996323;
+            vec2 direction=vec2(cos(phase),sin(phase));
+            float w=0.06+pow(0.5+0.5*sin(dot(p,direction)*4.0
+                +uSacredTime*0.075+phase),6.0);
+            // The existing world selector steers emphasis, never visibility.
+            w+=0.25*((d==int(uDimA)?1.0:0.0)*(1.0-uDimMorph)
+                +(d==int(uDimB)?1.0:0.0)*uDimMorph)*uDimAmt;
+            vec4 layer=world(p,d);
+            if (any(isnan(layer)) || any(isinf(layer))) layer=vec4(0);
+            worlds+=layer.rgb*layer.a*w;
+            coverage+=layer.a*w;
+            total+=w;
+        }
+        // Transparent line worlds keep their coverage; no opaque world can
+        // replace the stages, and the blend never fades an entire layer out.
+        vec3 combined=worlds/max(coverage,0.001);
+        float amount=0.60*clamp(coverage/max(total,0.001),0.0,1.0);
+        col=mix(col,combined,amount);
+    } else if (uDimAmt > 0.001) {  // the dimensions: two worlds morph into each other (A->B), their keyed lines crossfading over the base scene
+        int da = int(uDimA + 0.5), db = int(uDimB + 0.5);
+        vec4 w;
+        if (uDimMorph < 0.996 && da + db == 9 && da * db == 20)       // 2D fractal <-> 3D fractal: a real morph, one flattens/puffs into the other
+            w = fractal3D(p, db == 4 ? uDimMorph : 1.0 - uDimMorph);
+        else {
+            w = world(p, db);
+            if (uDimMorph < 0.996) { vec4 wa = world(p, da); w = mix(wa, w, uDimMorph); }
+        }
+        col = mix(col, w.rgb, w.a * uDimAmt);
+    }
     // the repeating pattern laid over it all (screen blend), fading from one to the next
     if (uPatAmt > 0.0) {
         vec3 pat = pattern(p, uPatA);
@@ -742,14 +1093,13 @@ void main()
         pic = max(mix(vec3(dot(pic, vec3(0.299, 0.587, 0.114))), pic, 1.6), 0.0) * 0.72;  // a little deeper and richer, so pale things don't glow white
         col = mix(col, pic * (1.0 + 0.3 * uBass), uIntro * uMediaAmt * 0.92 * MA(iuv));
     }
-    col *= 1.0 - 0.88 * uFocus;  // firework-watching: fade the trip to near-dark so the burst lines stand alone
     // the last frame, pulled inward and turned, its colours drifting: everything melts and trails
     vec2 fq = (uv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
     fq = rot(0.004 + 0.012 * uMid) * fq * (0.985 - 0.012 * uBass);
     vec3 prev = texture(uPrev, fq / vec2(uRes.x / uRes.y, 1.0) + 0.5).rgb;
     if (any(isnan(prev)) || any(isinf(prev))) prev = vec3(0.0);  // one bad pixel must never spread through the trails
     prev = max(hueShift(prev, 0.01 + 0.02 * uHigh), 0.0);
-    float fb = (0.5 + 0.15 * uStage / 3.0) * (1.0 - 0.8 * uIntro) * (1.0 - 0.92 * uCalm);  // quieted scenes barely trail, so lines stay crisp
+    float fb = (0.5 + 0.15 * uStage / 3.0) * (1.0 - 0.8 * uIntro) * (1.0 - 0.92 * uCalm) * uTrailMul;  // quieted scenes barely trail, so lines stay crisp
     col = mix(col, max(col, prev * 0.94), fb);
     if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
     frag = vec4(min(col, vec3(64.0)), 1.0);
@@ -883,16 +1233,17 @@ out vec4 frag;
 uniform sampler2D uScene, uBloom;
 uniform vec2 uRes;
 uniform float uBass, uTime, uBloomAmt, uCalm, uSpread;
+uniform float uChromaMul, uGrainMul;  // settings sliders: colour-split and grain amount
 float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 void main()
 {
     vec2 uv = gl_FragCoord.xy / uRes, d = uv - 0.5;
-    float k =(0.003 + 0.008 * uBass) * (1.0 - 0.9 * uCalm) * (0.25 + 0.75 * uSpread);  // colour split; eased right down when the palette is narrow, so edges don't fringe rainbow
+    float k =(0.003 + 0.008 * uBass) * (1.0 - 0.9 * uCalm) * (0.25 + 0.75 * uSpread) * uChromaMul;  // colour split; eased right down when the palette is narrow, so edges don't fringe rainbow
     vec3 c = vec3(texture(uScene, 0.5 + d * (1.0 + k)).r, texture(uScene, uv).g, texture(uScene, 0.5 + d * (1.0 - k)).b);
     c += texture(uBloom, uv).rgb * uBloomAmt;
     c *= 1.0 - 0.7 * dot(d, d);
     c = c / (1.0 + 0.12 * c);
-    c += (hash(gl_FragCoord.xy + fract(uTime) * 100.0) - 0.5) * 0.025 * (1.0 - 0.85 * uCalm);
+    c += (hash(gl_FragCoord.xy + fract(uTime) * 100.0) - 0.5) * 0.025 * (1.0 - 0.85 * uCalm) * uGrainMul;
     if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
     frag = vec4(c, 1.0);
 }

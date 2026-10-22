@@ -4,13 +4,12 @@
 //   EFFECT  one picture effect at a time: datamosh, glitch, VHS, thermal, slit-scan, infinite zoom, ...
 //           Many reach back in time: the last 48 pictures are kept (30 a second, so 1.6 s) in uHist.
 // and, whatever's picked, the things from the trip report that just happen with the music:
-//   shapes under a cloak that bends the light around them, ripples of light on the kicks, fireworks
-//   of sacred geometry rapid-firing on the highs, and on big drops the picture shatters like glass, the outlines of figures glimpsed
+//   shapes under a cloak that bends the light around them, ripples of light on the kicks,
+//   and on big drops the picture shatters like glass, the outlines of figures glimpsed
 //   in the chaos (or a white-light wipe-out the world reassembles from, or a curtain torn open).
 // Plus what recurs across many reported DMT trips (Erowid): at the onset, rainbow edges, red/green
 // double images, venetian-blind colour seams, the room's tint cycling, static in the corners and
-// comic-book outlines; later, heads peering in at the edges of vision and eyes popping open there;
-// and fireworks of multiplying squares that fold into cubes, moving in digital steps.
+// comic-book outlines; later, heads peering in at the edges of vision and eyes popping open there.
 // COPY puts a picture into the history.
 #pragma once
 
@@ -35,12 +34,12 @@ uniform vec2 uRes;
 uniform float uTime, uBass, uMid, uHigh, uLevel, uBeat, uHue, uMood;
 uniform float uFxT, uSpeed, uShatterT, uShatterSeed, uFigures, uCloak;
 uniform float uStage, uBreakKind, uWatchers;
-uniform float uCalm;  // quiet the trip's own colour overlays (a dimension, or firework-watching)
+uniform float uCalm;  // quiet the trip's own colour overlays (a dimension)
 uniform float uSpread;  // how wide a slice of the spectrum (music-reactive): small = a cohesive scheme, 1 = full rainbow
+uniform float uOnsetAmt;  // settings: how strong the come-up onset look is
 uniform float uIntro;  // 1 just after a picture is dropped: leave it be for now
 uniform vec3 uSeedPal[3];  // a dropped picture's three main colours...
 uniform float uSeedMix;     // ...and how much they colour everything  // the trip's stage; how a drop breaks through (glass / white light / torn curtain); the peripheral watchers
-uniform vec4 uBursts[16];  // fireworks: x, y, when, which kind
 uniform vec3 uRipples[6];  // ripples: x, y, when
 
 #define PI 3.14159265
@@ -180,7 +179,7 @@ vec2 move(int cam, float tt, float w, vec2 p)
         o = vec2(0.15 * sin(t * 0.6), 0.08 * sin(t * 1.1));
         p /= 1.0 + 0.25 * sin(t * 0.5) * p.y;
         rd = 0.05 + 0.08 * uCamBass;
-    } else if (cam == 8) {  // bullet time: nearly frozen, the camera circling
+    } else if (cam == 8) {  // bullet time: slowed, the camera circling
         a = t * 0.4;
         z = 1.25 + 0.1 * sin(t * 0.3);
         p /= 1.0 + 0.35 * sin(t * 0.4) * p.x;
@@ -728,170 +727,17 @@ float person(vec2 q)
     return min(d, sdSeg(q, vec2(0.04, 0.42), vec2(0.08, 0.0)) - 0.04);
 }
 
-// fireworks, the way the trip report has them: no sparks, no smoke, nothing falling. Each is a mandala
-// of sacred geometry (rings, a star polygon, flower-of-life petals, spokes; 6, 8 or 12 fold) that
-// blooms from a point, and keeps multiplying: every petal tip holds a smaller copy, three deep, so
-// it reads as an endless lattice. Hyper-luminous blue, pink and gold with a thin-film shimmer,
-// white-hot at the heart, and growing toward you until it fills your sight and passes through you.
-vec3 hyperCol(float t)
-{
-    t = fract(t) * 3.0;
-    vec3 blue = vec3(0.15, 0.55, 1.8), pink = vec3(1.8, 0.2, 1.1), gold = vec3(1.9, 1.3, 0.25);
-    return t < 1.0 ? mix(blue, pink, t) : (t < 2.0 ? mix(pink, gold, t - 1.0) : mix(gold, blue, t - 2.0));
-}
-vec3 mandalaBurst(vec2 p, vec4 Bu, float a)
-{
-    float R = 0.06 * exp(a * 2.6);  // its size: rushing toward you
-    vec2 q = (p - Bu.xy) / R;
-    if (dot(q, q) > 2.6) return vec3(0.0);  // (nothing of it out here)
-    float n = Bu.w < 0.33 ? 6.0 : (Bu.w < 0.66 ? 8.0 : 12.0), seg = 6.2831 / n;
-    float spin = fract(Bu.w * 10.0) < 0.5 ? 1.0 : -1.0, scale = R;
-    vec2 star = vec2(cos(2.0 * seg), sin(2.0 * seg));
-    vec3 c = vec3(0.0);
-    for (int l = 0; l < 3; l++) {
-        float fl = float(l);
-        q = rot(spin * (a * (1.2 + fl * 0.8) + fl * 0.5)) * q;  // each level turning its own way, folding as it blooms
-        float r = length(q), fa = abs(mod(atan(q.y, q.x), seg) - seg * 0.5);
-        vec2 f = r * vec2(cos(fa), sin(fa));  // folded into one slice: the kaleidoscope
-        float d = min(abs(r - 1.0), abs(r - 0.5));
-        d = min(d, sdSeg(f, vec2(1.0, 0.0), star));
-        d = min(d, abs(length(f - vec2(0.5, 0.0)) - 0.5));
-        d = min(d, sdSeg(f, vec2(0.0), vec2(1.0, 0.0)));
-        float ds = d * scale;  // how far, on screen
-        float stroke = smoothstep(2.2 * px, 0.7 * px, ds) * smoothstep(1.25, 0.95, r);  // a crisp drawn line, not a glow
-        vec3 k = hyperCol(Bu.w + fl * 0.33 + r * 0.4 + a * 0.6);
-        k *= 0.75 + 0.5 * cos(6.2831 * (fa * 3.0 + r * 2.0 - uTime * 1.5 + vec3(0.0, 0.33, 0.67)));  // iridescent ink
-        c += k * stroke * (1.0 - fl * 0.25);
-        q = (f - vec2(1.0, 0.0)) / 0.36;  // on to the copy at the petal tip
-        scale *= 0.36;
-    }
-    c += vec3(1.3, 1.25, 1.1) * smoothstep(2.5 * px, 1.0 * px, length(p - Bu.xy)) * exp(-a * 3.0);  // a small inked heart-dot, no halo
-    return c * smoothstep(0.0, 0.06, a) * (1.0 - smoothstep(1.2, 3.5, R)) * 0.42;  // crisp, not blown out, so bloom won't re-glow it
-}
-// the other kind, from the reports: "rapidly multiplying squares shower my vision as they explode in every
-// direction: left, right, up, down, then suddenly backwards and forwards", "white strings of light double
-// back on themselves, creating cubes in the place of squares", popping like "turquoise-amber-violet
-// popcorn kernels". Each square splits in two as it flies (four generations), folds up into a turning
-// wireframe cube, and later ones fly at you or away.
-vec3 cubeBurst(vec2 p, vec4 Bu, float a)
-{
-    const vec3 popcorn[3] = vec3[](vec3(0.2, 1.6, 1.4), vec3(1.8, 1.1, 0.2), vec3(1.2, 0.3, 1.8));
-    vec3 c = vec3(0.0);
-    for (int i = 0; i < 15; i++) {
-        float gen = i == 0 ? 0.0 : (i < 3 ? 1.0 : (i < 7 ? 2.0 : 3.0)), born = gen * 0.12;
-        if (a < born) break;
-        // where it is: its own flight, plus each ancestor's (square i's parent is (i-1)/2)
-        vec3 off = vec3(0.0);
-        float t = a - born;
-        int k = i;
-        for (int g = 0; g < 4; g++) {
-            float h = hash(vec2(float(k), Bu.w * 37.0)), h2 = hash(vec2(float(k) + 0.5, Bu.w * 53.0));
-            int d = int(floor(h * (k < 3 ? 4.0 : 6.0)));  // the first ones in the flat directions, then in and out too
-            vec3 dir = d == 0 ? vec3(1, 0, 0) : (d == 1 ? vec3(-1, 0, 0) : (d == 2 ? vec3(0, 1, 0) : (d == 3 ? vec3(0, -1, 0) : (d == 4 ? vec3(0, 0, 1) : vec3(0, 0, -1)))));
-            off += dir * t * 0.35 * (0.6 + h2);
-            if (k == 0) break;
-            k = (k - 1) / 2;
-            t = 0.12;
-        }
-        float persp = 1.0 / max(1.0 - off.z, 0.25);
-        vec2 ce = (Bu.xy + off.xy) * persp;
-        float s = 0.03 * persp;
-        if (length(p - ce) > s * 2.0) continue;
-        // the square folding up into a cube, turning
-        float fold = smoothstep(0.1, 0.4, a - born), fi = float(i);
-        mat2 ry = rot(a * 2.0 + fi * 1.7), rx = rot(a * 1.3 + fi * 0.9);
-        vec2 V[8];
-        for (int v = 0; v < 8; v++) {
-            vec3 q = vec3((v & 1) == 0 ? -1.0 : 1.0, (v & 2) == 0 ? -1.0 : 1.0, ((v & 4) == 0 ? -1.0 : 1.0) * fold);
-            q.xz = ry * q.xz;
-            q.yz = rx * q.yz;
-            V[v] = ce + q.xy * s;
-        }
-        float dmin = 1.0;
-        for (int v = 0; v < 8; v++)
-            for (int b = 0; b < 3; b++) {
-                int w = v ^ (1 << b);
-                if (w > v) dmin = min(dmin, sdSeg(p, V[v], V[w]));
-            }
-        c += popcorn[int(mod(fi + floor(Bu.w * 30.0), 3.0))] * smoothstep(2.2 * px, 0.7 * px, dmin);  // crisp wireframe stroke, not a glow
-    }
-    return c * 0.55 * smoothstep(0.0, 0.04, a) * (1.0 - smoothstep(1.1, 1.8, a));
-}
 
-// a rose / spirograph bloom: petals traced in line, turning as it grows
-vec3 roseBurst(vec2 p, vec4 Bu, float a)
+// the watchers: head outlines, alternately black and white, drifting across your vision every which way,
+// each its own size and tilt, some turning, some breathing bigger and smaller ("trying to stay out of my field of vision")
+// a head-and-shoulders bust (not an oval on a stick): head, a thin neck, broad shoulders
+float head(vec2 q)
 {
-    float R = 0.06 * exp(a * 2.5);
-    vec2 q = (p - Bu.xy) / R;
-    float rr = length(q);
-    if (rr > 1.35) return vec3(0.0);
-    float spin = fract(Bu.w * 5.0) < 0.5 ? 1.0 : -1.0;
-    float th = atan(q.y, q.x) + a * 1.4 * spin;
-    float k = floor(3.0 + fract(Bu.w * 13.0) * 4.0);          // 3..6 petals
-    vec3 c = vec3(0.0);
-    for (int i = 0; i < 2; i++) {
-        float rose = (1.0 - 0.45 * float(i)) * abs(cos(k * th));
-        float ds = abs(rr - rose) * R;
-        c += hyperCol(Bu.w + rr * 0.5 + a * 0.6 + float(i) * 0.2) * smoothstep(2.2 * px, 0.7 * px, ds) * (1.0 - float(i) * 0.3);
-    }
-    c *= smoothstep(1.35, 1.1, rr);
-    c += vec3(1.3, 1.25, 1.1) * smoothstep(2.5 * px, 1.0 * px, length(p - Bu.xy)) * exp(-a * 3.0);
-    return c * smoothstep(0.0, 0.06, a) * (1.0 - smoothstep(1.2, 3.5, R)) * 0.42;
+    float h  = length(q * vec2(1.0, 1.10)) - 0.70;                          // the head
+    float nk = sdSeg(q, vec2(0.0, -0.70), vec2(0.0, -1.00)) - 0.30;         // a thin neck, not a handle
+    float sh = length((q - vec2(0.0, -1.50)) * vec2(0.30, 1.17)) - 0.75;    // broad shoulders
+    return min(min(h, nk), sh);
 }
-
-// concentric rotating polygon rings, like opening portals
-vec3 ringBurst(vec2 p, vec4 Bu, float a)
-{
-    float R = 0.06 * exp(a * 2.5);
-    vec2 q = (p - Bu.xy) / R;
-    float rr = length(q);
-    if (rr > 1.4) return vec3(0.0);
-    float n = floor(3.0 + fract(Bu.w * 11.0) * 5.0);          // 3..7 sides
-    float seg = 6.2831 / n, dir = fract(Bu.w * 3.0) < 0.5 ? 1.0 : -1.0;
-    vec3 c = vec3(0.0);
-    for (int i = 0; i < 4; i++) {
-        float ri = 0.28 + 0.3 * float(i);
-        float ang = atan(q.y, q.x) + a * (0.8 + 0.3 * float(i)) * dir;
-        float poly = ri / cos(mod(ang, seg) - seg * 0.5);     // the n-gon's edge at this angle
-        c += hyperCol(Bu.w + float(i) * 0.25 + a * 0.5) * smoothstep(2.0 * px, 0.6 * px, abs(rr - poly) * R);
-    }
-    c *= smoothstep(1.4, 1.15, rr);
-    c += vec3(1.3, 1.25, 1.1) * smoothstep(2.5 * px, 1.0 * px, length(p - Bu.xy)) * exp(-a * 3.0);
-    return c * smoothstep(0.0, 0.06, a) * (1.0 - smoothstep(1.2, 3.5, R)) * 0.42;
-}
-
-// spiral arms unwinding outward
-vec3 spiralBurst(vec2 p, vec4 Bu, float a)
-{
-    float R = 0.06 * exp(a * 2.5);
-    vec2 q = (p - Bu.xy) / R;
-    float rr = length(q);
-    if (rr > 1.4) return vec3(0.0);
-    float arms = floor(2.0 + fract(Bu.w * 7.0) * 4.0);        // 2..5 arms
-    float dir = fract(Bu.w * 3.0) < 0.5 ? 1.0 : -1.0;
-    float ph = (atan(q.y, q.x) * dir * arms + 13.0 * rr - a * 5.0) / 6.2831;  // winding phase
-    float d = min(fract(ph), 1.0 - fract(ph));
-    float stroke = (1.0 - smoothstep(0.0, fwidth(ph) * 1.3, d)) * smoothstep(1.4, 1.1, rr) * smoothstep(0.05, 0.22, rr);
-    vec3 c = hyperCol(Bu.w + rr * 0.8 + a * 0.5) * stroke;
-    c += vec3(1.3, 1.25, 1.1) * smoothstep(2.5 * px, 1.0 * px, length(p - Bu.xy)) * exp(-a * 3.0);
-    return c * smoothstep(0.0, 0.06, a) * (1.0 - smoothstep(1.2, 3.5, R)) * 0.42;
-}
-
-// the watchers: heads at the edges of your vision, alternately outlined black and white, peering in and
-// ducking back out when you'd see them ("trying to stay out of my field of vision")
-float head(vec2 q) { return min(length(q * vec2(1.0, 0.85)) - 0.5, sdSeg(q, vec2(0.0, -0.4), vec2(0.0, -1.3)) - 0.26); }
-// an eye: almond, a glowing iris, a slit pupil, opening and shutting in a blink
-vec3 eyeAt(vec2 q, float open, vec3 iris)
-{
-    float almond = max(length(q - vec2(0.0, -0.75 + 0.35 * (1.0 - open))), length(q - vec2(0.0, 0.75 - 0.35 * (1.0 - open)))) - 1.0;
-    if (almond > 0.05) return vec3(0.0);
-    float r = length(q), white = smoothstep(0.02, -0.02, almond);
-    vec3 c = vec3(0.9, 0.85, 0.95) * white * 0.6;
-    c = mix(c, iris * (0.6 + 0.6 * sin(atan(q.y, q.x) * 12.0)), smoothstep(0.34, 0.3, r) * white);
-    c *= 1.0 - smoothstep(0.07, 0.04, abs(q.x)) * step(r, 0.3) * 0.95;  // the slit
-    return c + iris * exp(-abs(almond) * 40.0) * 0.6;
-}
-
 void main()
 {
     asp = uRes.x / uRes.y;
@@ -931,6 +777,23 @@ void main()
         bend += normalize(gr + 1e-5) * 0.035 * inside * uCloak;
         rim = exp(-pow((f - 1.0) * 5.0, 2.0)) * uCloak;
     }
+
+    // the DMT eyes: not drawn as eyeballs but as little black holes with a pinpoint of light that
+    // lens the picture around them into the shape of an eye. Their gravitational pull is added to the
+    // picture's sampling here; the dark core, pinpoint and rim go on over the warped picture below.
+    vec2 eyePos[6]; float eyeAmt[6];
+    for (int i = 0; i < 6; i++) {
+        float fi = float(i), slot = floor(uTime * 0.7 + fi * 0.37);
+        vec2 at = vec2(hash(vec2(fi, slot)) - 0.5, hash(vec2(fi + 9.0, slot)) - 0.5) * vec2(asp, 1.0);
+        float ph = fract(uTime * 0.7 + fi * 0.37);
+        float open = (uWatchers > 0.01 && length(at / vec2(asp, 1.0)) > 0.3) ? smoothstep(0.0, 0.5, sin(ph * PI)) : 0.0;  // smoothly open/close, only out in the periphery
+        eyePos[i] = at; eyeAmt[i] = open * uWatchers;
+        if (eyeAmt[i] > 0.001) {
+            vec2 d = p0 - at, de = d / vec2(0.11, 0.065);                 // almond metric -> the lens bends into an eye shape
+            float infl = exp(-dot(de, de) * 0.7);
+            bend += -normalize(d + 1e-5) * infl * (0.05 * eyeAmt[i]);     // pull the picture inward: a gravitational lens
+        }
+    }
     p += bend;
 
     vec3 col = uFx == 0 ? B(p) : effect(p);
@@ -942,7 +805,7 @@ void main()
     col += pal(uHue + 0.5) * ring * 0.6 + vec3(gRing) * 1.5;
 
     // the onset (the come-up): what so many reports describe before anything else
-    float on = (1.0 - smoothstep(0.5, 1.3, uStage)) * (1.0 - uIntro) * (1.0 - uCalm);  // no onset rainbow over a quieted scene
+    float on = (1.0 - smoothstep(0.5, 1.3, uStage)) * (1.0 - uIntro) * (1.0 - uCalm) * uOnsetAmt;  // no onset rainbow over a quieted scene
     if (on > 0.01) {
         vec2 o = vec2(0.006 + 0.01 * uBass, 0.0);  // red/green double images, like 3D glasses
         col = mix(col, vec3(S(p + o).r, S(p - o).g, col.b), 0.55 * on);
@@ -963,21 +826,35 @@ void main()
     // the watchers at the edges, and eyes popping open in the periphery
     if (uWatchers > 0.01) {
         for (int i = 0; i < 8; i++) {
-            float fi = float(i), th = fi * 0.785 + 0.3 * sin(uTime * 0.1 + fi);
-            vec2 dir = vec2(cos(th), sin(th));
-            float peek = uWatchers * smoothstep(0.2, 0.9, sin(uTime * 0.6 + fi * 1.7));  // in, then ducking back out
-            vec2 pos = dir * vec2(asp * 0.5, 0.5) * (1.12 - 0.22 * peek);
-            vec2 q = vec2(dot(p0 - pos, vec2(-dir.y, dir.x)), dot(p0 - pos, -dir)) / 0.12;  // turned to look in toward the middle
-            float line = exp(-abs(head(q)) * 0.12 * 400.0) * peek;
+            // each watcher has its own random everything: which way it drifts and how fast, which way
+            // it faces and whether it turns, how big it is, and whether it breathes bigger and smaller
+            float fi = float(i);
+            float hDir = hash(vec2(fi, 1.7)), hSpd = hash(vec2(fi, 2.3)), hX = hash(vec2(fi, 3.1)), hY = hash(vec2(fi, 4.9));
+            float hAng = hash(vec2(fi, 5.3)), hTurn = hash(vec2(fi, 6.7)), hSize = hash(vec2(fi, 8.2)), hBreath = hash(vec2(fi, 9.4));
+            vec2 box = vec2(asp, 1.0) * 1.4;                                  // a bit wider than the screen, so they drift fully off
+            vec2 u = fract(vec2(hX, hY) + vec2(cos(hDir * 6.2831), sin(hDir * 6.2831)) * (0.015 + 0.09 * hSpd) * uTime / box);
+            vec2 pos = (u - 0.5) * box;                                       // wraps round: off one side, back in the other
+            float wrap = smoothstep(0.0, 0.08, min(min(u.x, 1.0 - u.x), min(u.y, 1.0 - u.y)));  // fade out before the wrap, no popping
+            float ang = hAng * 6.2831 + (hTurn - 0.5) * 1.4 * uTime;          // any way up; some spin slowly, some barely turn
+            float sz = 0.05 + 0.2 * hSize;                                    // small to big
+            if (hBreath > 0.5) sz *= 1.0 + 0.45 * sin(uTime * (0.3 + 1.2 * hash(vec2(fi, 7.1))) + fi * 2.0);  // half of them grow and shrink
+            float peek = uWatchers * wrap * smoothstep(0.2, 0.9, sin(uTime * (0.3 + 0.5 * hSpd) + fi * 1.7));  // coming and going, each at its own pace
+            vec2 d = p0 - pos;
+            vec2 q = vec2(cos(ang) * d.x + sin(ang) * d.y, -sin(ang) * d.x + cos(ang) * d.y) / sz;
+            float line = exp(-abs(head(q)) * sz * 400.0) * peek;              // the same thin outline at any size
             if (mod(fi, 2.0) < 0.5) col *= 1.0 - line * 0.9;
             else col += line * 1.1;
         }
+        // the eyes themselves, drawn over the already-lensed picture: a dark almond hole, a bright
+        // pinpoint at its centre, and a faint rim where reality bunches up around the lens
         for (int i = 0; i < 6; i++) {
-            float fi = float(i), slot = floor(uTime * 0.7 + fi * 0.37);
-            vec2 at = vec2(hash(vec2(fi, slot)) - 0.5, hash(vec2(fi + 9.0, slot)) - 0.5) * vec2(asp, 1.0);
-            if (length(at / vec2(asp, 1.0)) < 0.3) continue;  // only out in the periphery
-            float ph = fract(uTime * 0.7 + fi * 0.37), open = floor(min(1.0, sin(ph * PI) * 1.6) * 4.0) / 4.0;  // popping open in digital steps
-            col += eyeAt((p0 - at) / 0.045, open, pal(uHue + fi * 0.2) * 1.5) * uWatchers;
+            float open = eyeAmt[i];
+            if (open < 0.001) continue;
+            vec2 d = p0 - eyePos[i], de = d / vec2(0.11, 0.065);
+            float r = length(de);
+            col *= 1.0 - smoothstep(0.95, 0.2, r) * 0.9 * open;                           // the black hole
+            col += exp(-pow((r - 0.8) * 3.5, 2.0)) * (0.25 + 0.3 * pal(uHue + float(i) * 0.2)) * open;  // the lensing rim, the eye's "white"
+            col += smoothstep(0.05, 0.0, length(d)) * vec3(1.3, 1.2, 1.5) * open;          // the pinpoint of light
         }
     }
 
@@ -1024,24 +901,6 @@ void main()
         }
         col += mix(vec3(0.9, 1.0, 1.0), pal(uHue + 0.3), 0.4) * g * uFigures * (0.6 + 0.4 * noise(p0 * 20.0 + uTime * 4.0)) * 1.4;
     }
-    // fireworks
-    vec3 fw = vec3(0.0);
-    for (int b = 0; b < 16; b++) {
-        float a = uTime - uBursts[b].z;
-        a = floor(a * 18.0) / 18.0;  // moving in digital steps, "animated at 99 frames per second"
-        if (a >= 0.0 && a < 1.8) {
-            float w = uBursts[b].w;
-            vec4 B = vec4(uBursts[b].xyz, fract(w * 7.919));  // a per-burst variation for whichever type
-            if      (w < 0.28) fw += mandalaBurst(p0, B, a);
-            else if (w < 0.46) fw += cubeBurst(p0, B, a);
-            else if (w < 0.64) fw += roseBurst(p0, B, a);
-            else if (w < 0.82) fw += ringBurst(p0, B, a);
-            else               fw += spiralBurst(p0, B, a);
-        }
-    }
-    // keep the bursts in the same drifting band as everything else: calm = the scene's hue, energy = their own blue/pink/gold
-    fw = mix(dot(fw, vec3(0.333)) * pal(uHue) * 2.0, fw, clamp(uSpread * 1.8, 0.0, 1.0));
-    col += fw;
     if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
     frag = vec4(clamp(col, 0.0, 64.0), 1.0);
 }

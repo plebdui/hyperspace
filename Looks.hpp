@@ -1,7 +1,7 @@
 // What the LOOK pass (LookShader.hpp) does, picked by the music: one picture effect at a time, and
 // 2-4 camera moves stacked on top of each other for chaos (more the deeper and louder it gets),
 // changing on drops or every so often (V and C pick one by hand). And the things that just
-// happen: ripples of light on kicks, mandala fireworks rapid-firing on the highs, the picture shattering like glass on big
+// happen: ripples of light on kicks, the picture shattering like glass on big
 // drops (figures glimpsed after), the shapes under the cloak when the mids swell, and the grid's
 // square turns.
 #pragma once
@@ -44,23 +44,38 @@ struct Looks {
     float timeScale = 1, speed = 1, camBeat = 0, camBass = 0;  // slow motion / bullet time / speed ramps slow the whole trip
     float shatterT = -1, sinceShatter = 99, shatterSeed = 0, figures = 0, cloak = 0, watchers = 0;
     int breakKind = 0;  // how a drop breaks through: 0 glass shatter, 1 white light, 2 torn curtain
-    bool grabNow = false;
-    bool forceFire = false;  // (testing: keep the fireworks going)  // keep this frame (for the shards, or the cinemagraph's still)
-    bool solo = false;       // firework-watching mode: fire one at a time, spaced out, trip quieted (key B)
-    static const int kBursts = 16;
-    float bursts[kBursts][4], ripples[6][3];
-    int nb = 0, nr = 0;
-    float gridTurn = 0, gridTarget = 0, sinceTurn = 0, sinceBurst = 0, burstGap = 0.3f, lastHigh = 0, sinceGrab = 0;
+    bool ripplesOn = false, breaksOn = true;  // settings: kick ripples, drop breakthroughs
+    int forcedBreak = -1;                    // settings: always this breakthrough (-1 = pick at random)
+    bool grabNow = false;    // keep this frame (for the shards, or the cinemagraph's still)
+    float ripples[6][3];
+    int nr = 0;
+    float gridTurn = 0, gridTarget = 0, sinceTurn = 0, sinceGrab = 0;
     uint32_t rng = 777;
 
     Looks()
     {
-        for (auto& b : bursts) b[2] = -100;
         for (auto& r : ripples) r[2] = -100;
     }
     float rnd() { rng = rng * 1664525u + 1013904223u; return (rng >> 8) / 16777216.0f; }
+    // Keep camera IDs stable, but exclude abrupt moves and unbounded moves
+    // whose angle/position wrapping can jump while stacked or fading.
+    static bool cameraEnabled(int c)
+    {
+        switch (c) {
+        case 2: case 3: case 5: case 6: case 10: case 17: case 21: case 22:
+        case 4: case 8: case 11: case 13: case 18: case 20:
+            return false;
+        default: return c >= 0 && c < kNumCams;
+        }
+    }
+    static int nextCamera(int c)
+    {
+        do { c = (c + 1) % kNumCams; } while (!cameraEnabled(c));
+        return c;
+    }
     void setCam(int i, int c)
     {
+        if (!cameraEnabled(c)) c = 0;
         if (cams[i] == c) return;
         if (cams[i]) { outCams[i] = cams[i]; outTs[i] = camTs[i]; outWs[i] = camWs[i]; }
         cams[i] = c;
@@ -68,10 +83,14 @@ struct Looks {
         camWs[i] = 0;
     }
     // a camera move that isn't already in the stack
+    // effects that show held, replayed or strobed old frames: the trip looks like it stopped
+    static bool freezes(int e) { return e == 11 || e == 12 || e == 13 || e == 24 || e == 46 || e == 47 || e == 48; }
+
     int pickCam()
     {
         for (;;) {
             const int c = 1 + (int)(rnd() * (kNumCams - 1));
+            if (!cameraEnabled(c)) continue;
             bool used = false;
             for (int k : cams) used |= k == c;
             if (!used) return c;
@@ -102,13 +121,15 @@ struct Looks {
         if (forcedFx >= 0) {
             if (fx != forcedFx) { fx = forcedFx; fxT = 0; grabNow = true; }
         } else if ((f.drop && fxT > 5) || fxT > fxLen) {
-            fx = rnd() < 0.2f ? 0 : 1 + (int)(rnd() * (kNumFx - 1));
+            do fx = rnd() < 0.2f ? 0 : 1 + (int)(rnd() * (kNumFx - 1));
+            while (freezes(fx));  // (the ones that hold or replay old frames stop the motion: by hand only)
             fxT = 0;
             fxLen = 10 + 10 * rnd();
             grabNow = true;
         }
         if (fx == kCinemagraph && sinceGrab > 8) grabNow = true;
         if (forcedCam >= 0) {  // by hand: just that one
+            if (!cameraEnabled(forcedCam)) forcedCam = 0;
             setCam(0, forcedCam);
             for (int i = 1; i < kStack; ++i) setCam(i, 0);
         } else {
@@ -127,54 +148,30 @@ struct Looks {
         }
         float target = 1;  // the slowest move in the stack sets the pace
         for (int c : cams) {
-            if (c == 8) target = std::min(target, 0.15f);
-            else if (c == 9) target = std::min(target, 0.35f);
-            else if (c == 10) target = std::min(target, f.beat > 0.4f ? 2.5f : 0.3f);
+            if (c == 8) target = std::min(target, 0.6f);  // slowed, never stopped: the flight keeps going
+            else if (c == 9) target = std::min(target, 0.7f);
+            else if (c == 10) target = std::min(target, f.beat > 0.4f ? 1.6f : 0.75f);
         }
         speed += (target - speed) * std::min(1.0f, dt * 2.5f);  // (lurching, but never in one frame)
         camBeat += (f.beat - camBeat) * std::min(1.0f, dt * 11);
         camBass += (std::min(f.bass, 2.5f) * 0.6f - camBass) * std::min(1.0f, dt * 5);
         timeScale = speed;
 
-        // ripples on the kicks, fireworks when the highs jump
-        if (f.beat > 0.999f) {
+        // ripples on the kicks
+        if (ripplesOn && f.beat > 0.999f) {
             ripples[nr][0] = (rnd() - 0.5f) * 1.4f;
             ripples[nr][1] = (rnd() - 0.5f) * 0.8f;
             ripples[nr][2] = now;
             nr = (nr + 1) % 6;
         }
-        // fireworks: a jump in the highs fires one, and while the highs stay up they rapid-fire,
-        // each from a point of the last, so they chain and cascade (some straight down the middle)
-        sinceBurst += dt;
-        const bool spike = f.high > 1.7f && lastHigh <= 1.7f, held = f.high > 1.7f || forceFire || solo;  // only real peaks
-        const float gap = solo ? 1.1f : (spike ? 0.5f : burstGap);  // occasional: never machine-gun; solo: one at a time
-        if ((spike || held) && sinceBurst > gap) {
-            const float* last = bursts[(nb + kBursts - 1) % kBursts];
-            float x = 0, y = 0;
-            if (!solo && rnd() > 0.3f && now - last[2] < 1) {  // solo keeps them centred, not chaining off to the edges
-                const float an = std::floor(rnd() * 8) * 0.785398f;
-                x = last[0] + 0.3f * std::cos(an);
-                y = last[1] + 0.3f * std::sin(an);
-                if (std::fabs(x) > 0.75f) x *= -0.5f;
-                if (std::fabs(y) > 0.42f) y *= -0.5f;
-            }
-            bursts[nb][0] = x;
-            bursts[nb][1] = y;
-            bursts[nb][2] = now;
-            bursts[nb][3] = rnd();
-            nb = (nb + 1) % kBursts;
-            sinceBurst = 0;
-            burstGap = 0.7f + 0.6f * rnd();  // held bursts re-fire only every ~0.7-1.3s, so they stay occasional
-        }
-        lastHigh = f.high;
 
         // the shatter, once you're past the come-up, on a big drop
         sinceShatter += dt;
-        if (f.drop && sinceShatter > 8 && stage > 0.8f) {
+        if (breaksOn && f.drop && sinceShatter > 8 && stage > 0.8f) {
             shatterT = 0;
             sinceShatter = 0;
             shatterSeed = rnd() * 100;
-            breakKind = (int)(rnd() * 3);
+            breakKind = forcedBreak >= 0 ? forcedBreak : (int)(rnd() * 3);
             grabNow = true;
         } else if (shatterT >= 0) {
             shatterT += dt;
@@ -191,12 +188,6 @@ struct Looks {
         const float want = std::clamp(f.mid - 0.9f, 0.0f, 1.0f) * std::min(stage / 1.5f, 1.0f);
         cloak += (want - cloak) * std::min(1.0f, dt * 1.5f);
 
-        // the grid turns square corners on drops (and now and then on a kick)
-        sinceTurn += dt;
-        if (sinceTurn > 3 && (f.drop || (f.beat > 0.999f && rnd() < 0.12f))) {
-            gridTarget += (rnd() < 0.5f ? 1 : -1) * 1.5707963f;
-            sinceTurn = 0;
-        }
-        gridTurn += (gridTarget - gridTurn) * std::min(1.0f, dt * 7);
+        // The grid's rapid quarter-turns are disabled with the abrupt cameras.
     }
 };
